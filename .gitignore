@@ -1,0 +1,28 @@
+# App desktop antigo (nao incluir)
+video_cutter/
+
+# Videos e uploads
+video_cutter_web/uploads/
+video_cutter_web/exports/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Logs e temporarios
+*.txt
+*.log
+
+# Testes
+test_video.mp4
+teste
+
+# Build
+build/
+dist/
+*.spec
+
+# IDE
+.vscode/
+.idea/
