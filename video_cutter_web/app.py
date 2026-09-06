@@ -36,20 +36,34 @@ analysis_progress = {}
 
 
 def find_ffmpeg():
+    candidates = [
+        "ffmpeg",
+        r"C:\ffmpeg\bin\ffmpeg.exe",
+        r"C:\Program Files\ffmpeg\bin\ffmpeg.exe",
+    ]
     try:
         result = subprocess.run(
             ["where", "ffmpeg"],
-            capture_output=True,
-            text=True,
-            shell=True,
-            timeout=5
+            capture_output=True, text=True, shell=True, timeout=5
         )
         if result.returncode == 0:
             path = result.stdout.strip().split("\n")[0].strip()
             if path and os.path.exists(path):
                 return path
-    except Exception as e:
-        logger.warning(f"FFmpeg not found: {e}")
+    except Exception:
+        pass
+
+    for c in candidates:
+        if os.path.exists(c):
+            return c
+        try:
+            result = subprocess.run(
+                [c, "-version"], capture_output=True, timeout=5
+            )
+            if result.returncode == 0:
+                return c
+        except Exception:
+            pass
     return None
 
 
@@ -205,7 +219,7 @@ def analyze_video(video_id):
 
     data = request.get_json() or {}
     silence_threshold = data.get("silence_threshold", -40)
-    min_silence = data.get("min_silence", 5)
+    min_silence = data.get("min_silence", 2)
     scene_threshold = data.get("scene_threshold", 30)
 
     analysis_id = str(uuid.uuid4())[:8]
@@ -340,7 +354,7 @@ def extract_audio(video_path, output_path):
     return output_path
 
 
-def analyze_silence(audio_path, silence_threshold_db=-40, min_silence_duration=0.5):
+def analyze_silence(audio_path, silence_threshold_db=-40, min_silence_duration=2.0):
     try:
         with wave.open(audio_path, 'r') as wav:
             n_channels = wav.getnchannels()
@@ -552,7 +566,23 @@ def combine_results(audio_segments, scene_timestamps, total_duration):
                 "selected": has_audio
             })
 
-    return cuts
+    merged = []
+    for cut in cuts:
+        if not merged:
+            merged.append(cut)
+            continue
+        last = merged[-1]
+        gap = cut["start"] - last["end"]
+        if gap <= 1.0 and last["has_audio"] == cut["has_audio"]:
+            last["end"] = cut["end"]
+            last["duration"] = round(last["end"] - last["start"], 2)
+        else:
+            merged.append(cut)
+
+    for i, cut in enumerate(merged):
+        cut["id"] = i + 1
+
+    return merged
 
 
 def cut_video(video_path, start_time, end_time, output_path):
