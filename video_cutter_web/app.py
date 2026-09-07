@@ -866,28 +866,28 @@ def _do_yt_download(download_id, url, quality):
             info = ydl.extract_info(url, download=True)
             title = info.get('title', 'video')
 
-            expected_filename = ydl.prepare_filename(info)
-            if has_ffmpeg and quality != 'audio':
-                base, _ = os.path.splitext(expected_filename)
-                expected_filename = base + '.mp4'
-            elif quality == 'audio' and has_ffmpeg:
-                base, _ = os.path.splitext(expected_filename)
-                expected_filename = base + '.mp3'
+            time.sleep(1)
 
             downloaded_file = None
-            if os.path.exists(expected_filename):
-                downloaded_file = expected_filename
-            else:
-                files = sorted(
-                    os.listdir(download_dir),
-                    key=lambda f: os.path.getmtime(os.path.join(download_dir, f)),
-                    reverse=True
-                )
-                for f in files:
+            mp4_files = []
+            for f in os.listdir(download_dir):
+                if f.endswith('.mp4') or f.endswith('.webm') or f.endswith('.mkv'):
                     fp = os.path.join(download_dir, f)
-                    if os.path.isfile(fp):
-                        downloaded_file = fp
-                        break
+                    if os.path.isfile(fp) and not f.endswith('.part'):
+                        mp4_files.append(fp)
+
+            if mp4_files:
+                mp4_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+                downloaded_file = mp4_files[0]
+            else:
+                all_files = []
+                for f in os.listdir(download_dir):
+                    fp = os.path.join(download_dir, f)
+                    if os.path.isfile(fp) and not f.endswith('.part') and not f.endswith('.ytdl'):
+                        all_files.append(fp)
+                if all_files:
+                    all_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+                    downloaded_file = all_files[0]
 
             if downloaded_file and os.path.exists(downloaded_file):
                 file_size = os.path.getsize(downloaded_file)
@@ -900,8 +900,7 @@ def _do_yt_download(download_id, url, quality):
                     'file_name': os.path.basename(downloaded_file),
                 })
             else:
-                logger.error(f"File not found. Expected: {expected_filename}")
-                logger.error(f"Dir contents: {os.listdir(download_dir)}")
+                logger.error(f"File not found. Dir contents: {os.listdir(download_dir)}")
                 yt_progress[download_id].update({
                     'status': 'error',
                     'error': 'Arquivo nao encontrado apos download',
