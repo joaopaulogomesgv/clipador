@@ -271,19 +271,23 @@ def _do_analyze(analysis_id, video_id, video_path, total_duration,
                 silence_threshold, min_silence, scene_threshold, use_whisper=False):
     try:
         prog = analysis_progress[analysis_id]
+        temp_audio = None
+
+        prog.update({'status': 'running', 'percent': 5, 'step': 'Extraindo audio...'})
 
         if FFMPEG_PATH:
-            prog.update({'status': 'running', 'percent': 5, 'step': 'Extraindo audio...'})
             temp_audio = os.path.join(tempfile.gettempdir(), f"temp_audio_{video_id}.wav")
             extract_audio(video_path, temp_audio)
-            prog.update({'percent': 20, 'step': 'Analisando silencio...'})
+            file_size = os.path.getsize(temp_audio) if os.path.exists(temp_audio) else 0
+            logger.info(f"Audio extracted: {file_size} bytes")
+        else:
+            prog.update({'percent': 10, 'step': 'Sem FFmpeg - analisando movimento visual...'})
+
+        prog.update({'percent': 20, 'step': 'Analisando silencio...'})
+        if temp_audio and os.path.exists(temp_audio):
             silent_regions = analyze_silence(temp_audio, silence_threshold, min_silence)
         else:
-            prog.update({'status': 'running', 'percent': 5, 'step': 'Lendo frames do video...'})
-            time.sleep(0.1)
-            prog.update({'percent': 10, 'step': 'Analisando movimento visual...'})
             silent_regions = analyze_silence_opencv(video_path, silence_threshold, min_silence)
-            temp_audio = None
 
         prog.update({'percent': 40, 'step': 'Processando segmentos de audio...'})
         time.sleep(0.1)
@@ -310,12 +314,12 @@ def _do_analyze(analysis_id, video_id, video_path, total_duration,
 
         whisper_boundaries = []
         whisper_segments = []
-        if use_whisper and FFMPEG_PATH and temp_audio and os.path.exists(temp_audio):
-            prog.update({'percent': 60, 'step': 'Transcrevendo com Whisper (pode demorar 2-5 min)...'})
+        if use_whisper and temp_audio and os.path.exists(temp_audio):
+            prog.update({'percent': 60, 'step': 'Transcrevendo com Whisper tiny (~2-5 min)...'})
             whisper_segments = transcribe_with_whisper(temp_audio, model_size="tiny")
-            prog.update({'percent': 75, 'step': f'Whisper encontrou {len(whisper_segments)} trechos. Detectando topicos...'})
+            prog.update({'percent': 75, 'step': f'Whisper: {len(whisper_segments)} trechos. Detectando topicos...'})
             whisper_boundaries = detect_topic_changes(whisper_segments, max_segment_duration=300)
-            prog.update({'percent': 80, 'step': f'{len(whisper_boundaries)} mudancas de topico detectadas'})
+            prog.update({'percent': 80, 'step': f'{len(whisper_boundaries)} mudancas de topico'})
 
         if temp_audio and os.path.exists(temp_audio):
             os.remove(temp_audio)
@@ -364,7 +368,7 @@ def extract_audio(video_path, output_path):
     cmd = [
         FFMPEG_PATH, "-i", video_path,
         "-vn", "-acodec", "pcm_s16le",
-        "-ar", "44100", "-ac", "1",
+        "-ar", "16000", "-ac", "1",
         output_path, "-y"
     ]
     subprocess.run(cmd, capture_output=True, timeout=300)
