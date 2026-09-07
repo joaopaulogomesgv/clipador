@@ -1304,25 +1304,28 @@
                 <div style="width:320px; border-left:1px solid var(--border); padding:20px; overflow-y:auto;">
                     <div class="section-title" style="margin-bottom:20px;">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9"/></svg>
-                        Configuracoes
+                        Configuracoes da Analise
                     </div>
 
                     <div class="settings-row">
-                        <div class="settings-label"><span>Threshold Silencio</span><span><span id="silenceVal">-40</span> dB</span></div>
+                        <div class="settings-label"><span>Sensibilidade do silencio</span><span><span id="silenceVal">-40</span> dB</span></div>
+                        <p style="font-size:11px; color:var(--text-muted); margin-bottom:6px;">Quanto menor, mais silencio e necessario para marcar como pausa</p>
                         <input type="range" id="silenceThreshold" min="-80" max="0" value="-40" oninput="document.getElementById('silenceVal').textContent = this.value">
                     </div>
                     <div class="settings-row">
-                        <div class="settings-label"><span>Min. Silencio</span><span><span id="minSilenceVal">2</span> s</span></div>
+                        <div class="settings-label"><span>Duracao minima do silencio</span><span><span id="minSilenceVal">2</span> s</span></div>
+                        <p style="font-size:11px; color:var(--text-muted); margin-bottom:6px;">Pausas menores que esse tempo sao ignoradas</p>
                         <input type="range" id="minSilence" min="1" max="30" value="2" oninput="document.getElementById('minSilenceVal').textContent = this.value">
                     </div>
                     <div class="settings-row">
-                        <div class="settings-label"><span>Threshold Cena</span><span><span id="sceneVal">30</span></span></div>
+                        <div class="settings-label"><span>Sensibilidade de cena</span><span><span id="sceneVal">30</span></span></div>
+                        <p style="font-size:11px; color:var(--text-muted); margin-bottom:6px;">Quanto maior, menos mudancas de cena sao detectadas</p>
                         <input type="range" id="sceneThreshold" min="10" max="80" value="30" oninput="document.getElementById('sceneVal').textContent = this.value">
                     </div>
 
                     <button class="btn btn-primary analyze-btn" id="analyzeBtn" onclick="analyzeVideo()" disabled>
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                        Analizar Video
+                        Analisar Video
                     </button>
 
                     <div class="yt-status" id="analysisStatus">
