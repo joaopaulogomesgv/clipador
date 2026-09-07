@@ -622,7 +622,7 @@ def transcribe_with_whisper(audio_path, model_size="base"):
         return []
 
 
-def detect_topic_changes(segments, max_segment_duration=300):
+def detect_topic_changes(segments, max_segment_duration=300, min_segment_duration=60):
     if not segments:
         return []
 
@@ -632,7 +632,7 @@ def detect_topic_changes(segments, max_segment_duration=300):
     for i, seg in enumerate(segments):
         current_text += " " + seg["text"]
 
-        if i > 0 and i % 5 == 0:
+        if i > 0 and i % 10 == 0:
             prev_boundary = topic_boundaries[-1]
             elapsed = seg["end"] - prev_boundary
 
@@ -641,12 +641,15 @@ def detect_topic_changes(segments, max_segment_duration=300):
                 current_text = ""
                 continue
 
+            if elapsed < min_segment_duration:
+                continue
+
             prev_text = ""
-            for j in range(max(0, i-5), i):
+            for j in range(max(0, i-10), i):
                 prev_text += " " + segments[j]["text"]
 
             curr_text = ""
-            for j in range(i, min(len(segments), i+5)):
+            for j in range(i, min(len(segments), i+10)):
                 curr_text += " " + segments[j]["text"]
 
             prev_words = set(prev_text.lower().split())
@@ -657,7 +660,7 @@ def detect_topic_changes(segments, max_segment_duration=300):
                 total = len(prev_words | curr_words)
                 similarity = overlap / total if total > 0 else 1.0
 
-                if similarity < 0.3:
+                if similarity < 0.5:
                     topic_boundaries.append(seg["end"])
                     current_text = ""
 
@@ -682,7 +685,7 @@ def combine_results_with_whisper(audio_segments, scene_timestamps, whisper_bound
     for i in range(len(sorted_boundaries) - 1):
         start = sorted_boundaries[i]
         end = sorted_boundaries[i + 1]
-        if end - start > 1.0:
+        if end - start > 5.0:
             has_audio = any(
                 seg["start"] <= start and seg["end"] >= end
                 for seg in audio_segments
@@ -708,7 +711,7 @@ def combine_results_with_whisper(audio_segments, scene_timestamps, whisper_bound
         last = merged[-1]
         gap = cut["start"] - last["end"]
         is_same_type = last["has_audio"] == cut["has_audio"] and not cut.get("is_topic_change")
-        if gap <= 1.0 and is_same_type:
+        if gap <= 2.0 and is_same_type and (last["duration"] + cut["duration"]) < 600:
             last["end"] = cut["end"]
             last["duration"] = round(last["end"] - last["start"], 2)
         else:
@@ -784,6 +787,9 @@ def export_cuts(video_id):
     if not cuts:
         return jsonify({"error": "Nenhum corte selecionado"}), 400
 
+    if len(cuts) > 50:
+        return jsonify({"error": "Maximo de 50 cortes por exportacao. Selecione menos cortes."}), 400
+
     export_dir = os.path.join(app.config['EXPORT_FOLDER'], video_id)
     os.makedirs(export_dir, exist_ok=True)
 
@@ -791,9 +797,19 @@ def export_cuts(video_id):
     for cut in cuts:
         filename = f"corte_{cut['id']:03d}.mp4"
         output_path = os.path.join(export_dir, filename)
-        success = cut_video(video_path, cut["start"], cut["end"], output_path)
-        if success:
-            exported_files.append(filename)
+        logger.info(f"Exporting cut {cut['id']}: {cut['start']}s - {cut['end']}s")
+        try:
+            success = cut_video(video_path, cut["start"], cut["end"], output_path)
+            if success and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+                exported_files.append(filename)
+                logger.info(f"Cut {cut['id']} exported: {filename}")
+            else:
+                logger.error(f"Cut {cut['id']} failed: success={success}")
+        except Exception as e:
+            logger.error(f"Cut {cut['id']} error: {e}")
+
+    if not exported_files:
+        return jsonify({"error": "Nenhum corte foi exportado. Verifique se o FFmpeg esta funcionando."}), 500
 
     if len(exported_files) == 1:
         return send_file(
