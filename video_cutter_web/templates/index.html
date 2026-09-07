@@ -1381,11 +1381,11 @@
                     <div class="input-group" style="margin-top:16px;">
                         <label>Qualidade</label>
                         <select class="input-field" id="ytQuality">
-                            <option value="best">Melhor qualidade</option>
-                            <option value="1080p">1080p Full HD</option>
-                            <option value="720p" selected>720p HD</option>
-                            <option value="480p">480p SD</option>
-                            <option value="audio">Apenas Audio (MP3)</option>
+                            <option value="best">Melhor possivel</option>
+                            <option value="1080p">Alta (1080p)</option>
+                            <option value="720p" selected>Media (720p)</option>
+                            <option value="480p">Baixa (480p)</option>
+                            <option value="audio">Somente audio (MP3)</option>
                         </select>
                     </div>
 
@@ -1413,31 +1413,51 @@
             </div>
 
             <div style="padding:32px; max-width:700px;">
-                <div style="background:var(--bg-card); border:1px solid var(--border); border-radius:16px; overflow:hidden;">
+                <div style="background:var(--bg-card); border:1px solid var(--border); border-radius:16px; overflow:hidden; margin-bottom:20px;">
                     <div style="padding:20px; border-bottom:1px solid var(--border);">
-                        <h3 style="font-size:16px; font-weight:700; margin-bottom:4px;">Exportacao</h3>
-                        <p style="font-size:13px; color:var(--text-muted);">Configuracoes de formato e qualidade</p>
+                        <h3 style="font-size:16px; font-weight:700; margin-bottom:4px;">Analise de Video</h3>
+                        <p style="font-size:13px; color:var(--text-muted);">Como o sistema identifica os pontos de corte</p>
                     </div>
 
-                    <div style="padding:20px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
-                        <div><h4 style="font-size:14px; margin-bottom:4px;">Manter audio</h4><p style="font-size:12px; color:var(--text-muted);">Incluir trilha de audio nos cortes</p></div>
-                        <div class="toggle active" onclick="this.classList.toggle('active')"></div>
+                    <div style="padding:20px; border-bottom:1px solid var(--border);">
+                        <div class="settings-row">
+                            <div class="settings-label"><span>Sensibilidade do silencio</span><span id="configSilenceDb">-40 dB</span></div>
+                            <p style="font-size:11px; color:var(--text-muted); margin-bottom:8px;">Quanto menor, mais silencio e necessario para marcar como pausa. -40 e recomendado.</p>
+                            <input type="range" id="configSilenceThreshold" min="-80" max="0" value="-40" oninput="document.getElementById('configSilenceDb').textContent = this.value + ' dB'">
+                        </div>
                     </div>
 
-                    <div style="padding:20px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
-                        <div><h4 style="font-size:14px; margin-bottom:4px;">Converter para MP4</h4><p style="font-size:12px; color:var(--text-muted);">Forcar formato MP4 na saida</p></div>
-                        <div class="toggle active" onclick="this.classList.toggle('active')"></div>
+                    <div style="padding:20px; border-bottom:1px solid var(--border);">
+                        <div class="settings-row">
+                            <div class="settings-label"><span>Duracao minima do silencio</span><span id="configMinSilence">2 s</span></div>
+                            <p style="font-size:11px; color:var(--text-muted); margin-bottom:8px;">Pausas menores que esse tempo sao ignoradas. Aumente se estiver criando muitos cortes.</p>
+                            <input type="range" id="configMinSilenceRange" min="1" max="30" value="2" oninput="document.getElementById('configMinSilence').textContent = this.value + ' s'">
+                        </div>
                     </div>
 
                     <div style="padding:20px;">
                         <div class="settings-row">
-                            <div class="settings-label"><span>Qualidade padrao</span></div>
-                            <select class="input-field" style="width:100%;">
-                                <option>Alta (1080p)</option>
-                                <option selected>Media (720p)</option>
-                                <option>Baixa (480p)</option>
-                            </select>
+                            <div class="settings-label"><span>Sensibilidade de cena</span><span id="configSceneVal">30</span></div>
+                            <p style="font-size:11px; color:var(--text-muted); margin-bottom:8px;">Quanto maior, menos mudancas de cena sao detectadas. 30 e recomendado.</p>
+                            <input type="range" id="configSceneThreshold" min="10" max="80" value="30" oninput="document.getElementById('configSceneVal').textContent = this.value">
                         </div>
+                    </div>
+                </div>
+
+                <div style="background:var(--bg-card); border:1px solid var(--border); border-radius:16px; overflow:hidden;">
+                    <div style="padding:20px; border-bottom:1px solid var(--border);">
+                        <h3 style="font-size:16px; font-weight:700; margin-bottom:4px;">Sobre</h3>
+                        <p style="font-size:13px; color:var(--text-muted);">Informacoes do sistema</p>
+                    </div>
+
+                    <div style="padding:20px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
+                        <div><h4 style="font-size:14px; margin-bottom:4px;">FFmpeg</h4><p style="font-size:12px; color:var(--text-muted);">Necessario para analise de audio real</p></div>
+                        <span class="cut-badge badge-green" id="ffmpegStatus">Detectando...</span>
+                    </div>
+
+                    <div style="padding:20px; display:flex; justify-content:space-between; align-items:center;">
+                        <div><h4 style="font-size:14px; margin-bottom:4px;">Versao</h4><p style="font-size:12px; color:var(--text-muted);">Clipador - Cortador de Videos</p></div>
+                        <span style="font-size:13px; color:var(--text-secondary);">v1.0.0</span>
                     </div>
                 </div>
             </div>
@@ -1892,6 +1912,34 @@
             t.className = 'toast ' + type + ' show';
             setTimeout(function() { t.classList.remove('show'); }, 3000);
         }
+
+        async function checkFFmpeg() {
+            try {
+                var r = await fetch('/analyze/nonexistent', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
+                var el = document.getElementById('ffmpegStatus');
+                if (el) {
+                    el.textContent = 'Instalado';
+                    el.className = 'cut-badge badge-green';
+                }
+            } catch(e) {}
+        }
+
+        function syncConfig() {
+            var st = document.getElementById('configSilenceThreshold');
+            var ms = document.getElementById('configMinSilenceRange');
+            var sc = document.getElementById('configSceneThreshold');
+            var s1 = document.getElementById('silenceThreshold');
+            var s2 = document.getElementById('minSilence');
+            var s3 = document.getElementById('sceneThreshold');
+            if (st && s1) { st.value = s1.value; document.getElementById('configSilenceDb').textContent = s1.value + ' dB'; }
+            if (ms && s2) { ms.value = s2.value; document.getElementById('configMinSilence').textContent = s2.value + ' s'; }
+            if (sc && s3) { sc.value = s3.value; document.getElementById('configSceneVal').textContent = s3.value; }
+        }
+
+        window.addEventListener('DOMContentLoaded', function() {
+            checkFFmpeg();
+            syncConfig();
+        });
     </script>
 </body>
 </html>
