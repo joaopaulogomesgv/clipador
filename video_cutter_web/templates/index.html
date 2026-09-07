@@ -1323,6 +1323,16 @@
                         <input type="range" id="sceneThreshold" min="10" max="80" value="30" oninput="document.getElementById('sceneVal').textContent = this.value">
                     </div>
 
+                    <div style="margin:16px 0; padding:12px; background:var(--bg-card); border:1px solid var(--border); border-radius:10px;">
+                        <label style="display:flex; align-items:center; gap:10px; cursor:pointer;">
+                            <input type="checkbox" id="useWhisper" style="width:18px; height:18px; accent-color:var(--accent);">
+                            <div>
+                                <div style="font-size:13px; font-weight:600;">Usar Whisper (IA)</div>
+                                <div style="font-size:11px; color:var(--text-muted);">Transcreve o audio e corta por mudanca de topico. Mais lento mas muito mais preciso.</div>
+                            </div>
+                        </label>
+                    </div>
+
                     <button class="btn btn-primary analyze-btn" id="analyzeBtn" onclick="analyzeVideo()" disabled>
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
                         Analisar Video
@@ -1607,8 +1617,9 @@
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
                         silence_threshold: parseInt(document.getElementById('silenceThreshold').value) || -40,
-                        min_silence: parseInt(document.getElementById('minSilence').value) || 5,
-                        scene_threshold: parseInt(document.getElementById('sceneThreshold').value) || 30
+                        min_silence: parseInt(document.getElementById('minSilence').value) || 2,
+                        scene_threshold: parseInt(document.getElementById('sceneThreshold').value) || 30,
+                        use_whisper: document.getElementById('useWhisper').checked
                     })
                 });
 

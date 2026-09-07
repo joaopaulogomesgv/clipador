@@ -221,6 +221,7 @@ def analyze_video(video_id):
     silence_threshold = data.get("silence_threshold", -40)
     min_silence = data.get("min_silence", 2)
     scene_threshold = data.get("scene_threshold", 30)
+    use_whisper = data.get("use_whisper", False)
 
     analysis_id = str(uuid.uuid4())[:8]
     analysis_progress[analysis_id] = {
@@ -239,7 +240,7 @@ def analyze_video(video_id):
     thread = threading.Thread(
         target=_do_analyze,
         args=(analysis_id, video_id, video_path, total_duration,
-              silence_threshold, min_silence, scene_threshold),
+              silence_threshold, min_silence, scene_threshold, use_whisper),
         daemon=True
     )
     thread.start()
@@ -267,7 +268,7 @@ def analyze_result(analysis_id):
 
 
 def _do_analyze(analysis_id, video_id, video_path, total_duration,
-                silence_threshold, min_silence, scene_threshold):
+                silence_threshold, min_silence, scene_threshold, use_whisper=False):
     try:
         prog = analysis_progress[analysis_id]
 
@@ -275,17 +276,16 @@ def _do_analyze(analysis_id, video_id, video_path, total_duration,
             prog.update({'status': 'running', 'percent': 5, 'step': 'Extraindo audio...'})
             temp_audio = os.path.join(tempfile.gettempdir(), f"temp_audio_{video_id}.wav")
             extract_audio(video_path, temp_audio)
-            prog.update({'percent': 25, 'step': 'Analisando silencio...'})
+            prog.update({'percent': 20, 'step': 'Analisando silencio...'})
             silent_regions = analyze_silence(temp_audio, silence_threshold, min_silence)
-            if os.path.exists(temp_audio):
-                os.remove(temp_audio)
         else:
             prog.update({'status': 'running', 'percent': 5, 'step': 'Lendo frames do video...'})
             time.sleep(0.1)
             prog.update({'percent': 10, 'step': 'Analisando movimento visual...'})
             silent_regions = analyze_silence_opencv(video_path, silence_threshold, min_silence)
+            temp_audio = None
 
-        prog.update({'percent': 45, 'step': 'Processando segmentos...'})
+        prog.update({'percent': 40, 'step': 'Processando segmentos de audio...'})
         time.sleep(0.1)
 
         audio_segments = []
@@ -305,14 +305,28 @@ def _do_analyze(analysis_id, video_id, video_path, total_duration,
                 "type": "content"
             })
 
-        prog.update({'percent': 55, 'step': 'Detectando mudancas de cena...'})
-
+        prog.update({'percent': 50, 'step': 'Detectando mudancas de cena...'})
         scene_timestamps = detect_scenes(video_path, scene_threshold)
+
+        whisper_boundaries = []
+        whisper_segments = []
+        if use_whisper and FFMPEG_PATH and temp_audio and os.path.exists(temp_audio):
+            prog.update({'percent': 60, 'step': 'Transcrevendo com Whisper (pode demorar)...'})
+            whisper_segments = transcribe_with_whisper(temp_audio, model_size="base")
+            prog.update({'percent': 75, 'step': 'Detectando mudancas de topico...'})
+            whisper_boundaries = detect_topic_changes(whisper_segments, max_segment_duration=300)
+
+        if temp_audio and os.path.exists(temp_audio):
+            os.remove(temp_audio)
 
         prog.update({'percent': 90, 'step': 'Combinando resultados...'})
         time.sleep(0.1)
 
-        cuts = combine_results(audio_segments, scene_timestamps, total_duration)
+        if use_whisper and whisper_boundaries:
+            cuts = combine_results_with_whisper(audio_segments, scene_timestamps, whisper_boundaries, total_duration)
+        else:
+            cuts = combine_results(audio_segments, scene_timestamps, total_duration)
+
         videos[video_id]["cuts"] = cuts
 
         result = {
@@ -320,6 +334,8 @@ def _do_analyze(analysis_id, video_id, video_path, total_duration,
             "audio_segments": audio_segments,
             "scene_timestamps": scene_timestamps,
             "silent_regions": silent_regions,
+            "whisper_segments": whisper_segments[:50] if whisper_segments else [],
+            "whisper_boundaries": whisper_boundaries,
             "cuts": cuts
         }
 
@@ -574,6 +590,125 @@ def combine_results(audio_segments, scene_timestamps, total_duration):
         last = merged[-1]
         gap = cut["start"] - last["end"]
         if gap <= 1.0 and last["has_audio"] == cut["has_audio"]:
+            last["end"] = cut["end"]
+            last["duration"] = round(last["end"] - last["start"], 2)
+        else:
+            merged.append(cut)
+
+    for i, cut in enumerate(merged):
+        cut["id"] = i + 1
+
+    return merged
+
+
+def transcribe_with_whisper(audio_path, model_size="base"):
+    try:
+        import whisper
+        logger.info(f"Loading whisper model: {model_size}")
+        model = whisper.load_model(model_size)
+        logger.info("Transcribing audio...")
+        result = model.transcribe(audio_path, language="pt", verbose=False)
+        segments = []
+        for seg in result.get("segments", []):
+            segments.append({
+                "start": round(seg["start"], 2),
+                "end": round(seg["end"], 2),
+                "text": seg["text"].strip()
+            })
+        logger.info(f"Whisper found {len(segments)} segments")
+        return segments
+    except Exception as e:
+        logger.error(f"Whisper transcription failed: {e}")
+        return []
+
+
+def detect_topic_changes(segments, max_segment_duration=300):
+    if not segments:
+        return []
+
+    topic_boundaries = [0]
+    current_text = ""
+
+    for i, seg in enumerate(segments):
+        current_text += " " + seg["text"]
+
+        if i > 0 and i % 5 == 0:
+            prev_boundary = topic_boundaries[-1]
+            elapsed = seg["end"] - prev_boundary
+
+            if elapsed >= max_segment_duration:
+                topic_boundaries.append(seg["end"])
+                current_text = ""
+                continue
+
+            prev_text = ""
+            for j in range(max(0, i-5), i):
+                prev_text += " " + segments[j]["text"]
+
+            curr_text = ""
+            for j in range(i, min(len(segments), i+5)):
+                curr_text += " " + segments[j]["text"]
+
+            prev_words = set(prev_text.lower().split())
+            curr_words = set(curr_text.lower().split())
+
+            if prev_words and curr_words:
+                overlap = len(prev_words & curr_words)
+                total = len(prev_words | curr_words)
+                similarity = overlap / total if total > 0 else 1.0
+
+                if similarity < 0.3:
+                    topic_boundaries.append(seg["end"])
+                    current_text = ""
+
+    return topic_boundaries
+
+
+def combine_results_with_whisper(audio_segments, scene_timestamps, whisper_boundaries, total_duration):
+    all_boundaries = set()
+    for seg in audio_segments:
+        all_boundaries.add(round(seg["start"], 2))
+        all_boundaries.add(round(seg["end"], 2))
+    for ts in scene_timestamps:
+        all_boundaries.add(round(ts, 2))
+    for ts in whisper_boundaries:
+        all_boundaries.add(round(ts, 2))
+
+    all_boundaries.add(0)
+    all_boundaries.add(round(total_duration, 2))
+    sorted_boundaries = sorted(all_boundaries)
+
+    cuts = []
+    for i in range(len(sorted_boundaries) - 1):
+        start = sorted_boundaries[i]
+        end = sorted_boundaries[i + 1]
+        if end - start > 1.0:
+            has_audio = any(
+                seg["start"] <= start and seg["end"] >= end
+                for seg in audio_segments
+            )
+            is_topic_change = any(
+                abs(ts - start) < 1.0 for ts in whisper_boundaries
+            )
+            cuts.append({
+                "id": len(cuts) + 1,
+                "start": start,
+                "end": end,
+                "duration": round(end - start, 2),
+                "has_audio": has_audio,
+                "is_topic_change": is_topic_change,
+                "selected": has_audio
+            })
+
+    merged = []
+    for cut in cuts:
+        if not merged:
+            merged.append(cut)
+            continue
+        last = merged[-1]
+        gap = cut["start"] - last["end"]
+        is_same_type = last["has_audio"] == cut["has_audio"] and not cut.get("is_topic_change")
+        if gap <= 1.0 and is_same_type:
             last["end"] = cut["end"]
             last["duration"] = round(last["end"] - last["start"], 2)
         else:
