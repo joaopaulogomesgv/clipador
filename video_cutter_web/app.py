@@ -866,13 +866,32 @@ def _do_yt_download(download_id, url, quality):
             info = ydl.extract_info(url, download=True)
             title = info.get('title', 'video')
 
+            expected_filename = ydl.prepare_filename(info)
+            if has_ffmpeg and quality != 'audio':
+                base, _ = os.path.splitext(expected_filename)
+                expected_filename = base + '.mp4'
+            elif quality == 'audio' and has_ffmpeg:
+                base, _ = os.path.splitext(expected_filename)
+                expected_filename = base + '.mp3'
+
             downloaded_file = None
-            for f in os.listdir(download_dir):
-                if title in f:
-                    downloaded_file = os.path.join(download_dir, f)
-                    break
+            if os.path.exists(expected_filename):
+                downloaded_file = expected_filename
+            else:
+                files = sorted(
+                    os.listdir(download_dir),
+                    key=lambda f: os.path.getmtime(os.path.join(download_dir, f)),
+                    reverse=True
+                )
+                for f in files:
+                    fp = os.path.join(download_dir, f)
+                    if os.path.isfile(fp):
+                        downloaded_file = fp
+                        break
 
             if downloaded_file and os.path.exists(downloaded_file):
+                file_size = os.path.getsize(downloaded_file)
+                logger.info(f"Downloaded: {downloaded_file} ({file_size} bytes)")
                 yt_progress[download_id].update({
                     'status': 'done',
                     'percent': 100,
@@ -881,6 +900,8 @@ def _do_yt_download(download_id, url, quality):
                     'file_name': os.path.basename(downloaded_file),
                 })
             else:
+                logger.error(f"File not found. Expected: {expected_filename}")
+                logger.error(f"Dir contents: {os.listdir(download_dir)}")
                 yt_progress[download_id].update({
                     'status': 'error',
                     'error': 'Arquivo nao encontrado apos download',
