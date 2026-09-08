@@ -1236,21 +1236,47 @@ def combine_results_with_whisper(audio_segments, scene_timestamps, whisper_bound
     return merged
 
 
-def cut_video(video_path, start_time, end_time, output_path):
+def cut_video(video_path, start_time, end_time, output_path, format_type="reels_smart"):
     if not FFMPEG_PATH:
         return cut_video_opencv(video_path, start_time, end_time, output_path)
 
-    duration = end_time - start_time
+    duration = max(0.1, end_time - start_time)
     cmd = [
         FFMPEG_PATH,
-        "-ss", str(start_time),
+        "-ss", str(max(0, start_time)),
         "-i", video_path,
         "-t", str(duration),
+    ]
+
+    # Handle formatting (Reels 9:16 vs original)
+    if format_type in ("reels_smart", "reels"):
+        try:
+            from core.face_tracker import build_smart_reels_filter
+            info = get_video_info(video_path)
+            vw = info.get("width") or 1920
+            vh = info.get("height") or 1080
+            vf = build_smart_reels_filter(video_path, start_time, duration, vw, vh, 1080, 1920)
+            cmd.extend(["-vf", vf])
+        except Exception as e:
+            logger.warning(f"Error building smart reels filter: {e}, falling back to center crop")
+            cmd.extend(["-vf", "crop=ih*9/16:ih:(iw-ow)/2:0,scale=1080:1920"])
+    elif format_type == "reels_blur":
+        filter_complex = (
+            "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=20:5[bg];"
+            "[0:v]scale=1080:-2:force_original_aspect_ratio=decrease[fg];"
+            "[bg][fg]overlay=(W-w)/2:(H-h)/2"
+        )
+        cmd.extend(["-filter_complex", filter_complex])
+    elif format_type == "reels_crop":
+        cmd.extend(["-vf", "crop=ih*9/16:ih:(iw-ow)/2:0,scale=1080:1920"])
+    # format_type == "original": no video filter applied
+
+    cmd.extend([
         "-c:v", "libx264", "-preset", "ultrafast", "-crf", "22",
         "-c:a", "aac", "-b:a", "192k",
         "-avoid_negative_ts", "make_zero",
         output_path, "-y"
-    ]
+    ])
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
     if result.returncode != 0:
         logger.error(f"FFmpeg cut error: {result.stderr}")
@@ -1286,7 +1312,7 @@ def cut_video_opencv(video_path, start_time, end_time, output_path):
         return False
 
 
-def _run_export_task(video_id, cuts, video_path, export_dir):
+def _run_export_task(video_id, cuts, video_path, export_dir, format_type="reels_smart"):
     prog = export_progress.get(video_id)
     if not prog:
         return
@@ -1301,14 +1327,28 @@ def _run_export_task(video_id, cuts, video_path, export_dir):
         def _export_single(cut):
             filename = f"corte_{cut['id']:03d}.mp4"
             output_path = os.path.join(export_dir, filename)
-            # Reuse if already exported previously
+            meta_path = os.path.join(export_dir, f"corte_{cut['id']:03d}.format")
+
+            # Check if existing file was rendered in the EXACT same format
             if os.path.exists(output_path) and os.path.getsize(output_path) > 1000:
-                logger.info(f"Reusing existing cut {cut['id']}: {filename}")
-                return filename, cut
-            logger.info(f"Exporting cut {cut['id']}: {cut['start']}s - {cut['end']}s")
+                if os.path.exists(meta_path):
+                    try:
+                        with open(meta_path, "r", encoding="utf-8") as mf:
+                            if mf.read().strip() == format_type:
+                                logger.info(f"Reusing existing cut {cut['id']} ({format_type}): {filename}")
+                                return filename, cut
+                    except Exception:
+                        pass
+
+            logger.info(f"Exporting cut {cut['id']} in {format_type}: {cut['start']}s - {cut['end']}s")
             try:
-                success = cut_video(video_path, cut["start"], cut["end"], output_path)
+                success = cut_video(video_path, cut["start"], cut["end"], output_path, format_type=format_type)
                 if success and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+                    try:
+                        with open(meta_path, "w", encoding="utf-8") as mf:
+                            mf.write(format_type)
+                    except Exception:
+                        pass
                     logger.info(f"Cut {cut['id']} exported: {filename}")
                     return filename, cut
                 else:
@@ -1366,6 +1406,7 @@ def export_start(video_id):
     data = request.get_json() or {}
     selected_ids = data.get("selected_ids", [])
     client_cuts = data.get("cuts", [])
+    format_type = data.get("format_type", "reels_smart")
 
     video_path = None
     cuts = []
@@ -1432,19 +1473,28 @@ def export_start(video_id):
     if cur and cur.get("status") == "running":
         return jsonify({"status": "running", "video_id": video_id, "total": cur.get("total", len(cuts))})
 
-    # Check if all already exist on disk
+    # Check if all already exist on disk in the requested format
     all_exist = True
     existing_files = []
     for c in cuts:
         fpath = os.path.join(export_dir, f"corte_{c['id']:03d}.mp4")
-        if os.path.exists(fpath) and os.path.getsize(fpath) > 1000:
+        meta_path = os.path.join(export_dir, f"corte_{c['id']:03d}.format")
+        fmt_matches = False
+        if os.path.exists(meta_path):
+            try:
+                with open(meta_path, "r", encoding="utf-8") as mf:
+                    fmt_matches = (mf.read().strip() == format_type)
+            except Exception:
+                pass
+
+        if os.path.exists(fpath) and os.path.getsize(fpath) > 1000 and fmt_matches:
             existing_files.append(f"corte_{c['id']:03d}.mp4")
         else:
             all_exist = False
 
     zip_path = os.path.join(export_dir, "cortes.zip")
 
-    # If all requested cuts already exist as MP4s, generate a FRESH zip specifically with ONLY these requested cuts!
+    # If all requested cuts already exist as MP4s in this format, generate a FRESH zip
     if all_exist:
         if len(cuts) > 1:
             import zipfile
@@ -1457,7 +1507,7 @@ def export_start(video_id):
             "current": len(cuts),
             "total": len(cuts),
             "percent": 100,
-            "current_title": f"{len(cuts)} corte(s) selecionado(s) pronto(s) para download!",
+            "current_title": f"{len(cuts)} corte(s) em formato {format_type} pronto(s) para download!",
             "current_file": "",
             "completed_files": sorted(existing_files),
             "zip_ready": len(cuts) > 1,
@@ -1478,7 +1528,7 @@ def export_start(video_id):
         "current": len(existing_files),
         "total": len(cuts),
         "percent": int((len(existing_files) / len(cuts)) * 90) if len(cuts) else 0,
-        "current_title": f"Iniciando exportação de {len(cuts)} corte(s) selecionado(s)...",
+        "current_title": f"Iniciando exportação ({format_type}) de {len(cuts)} corte(s)...",
         "current_file": "",
         "completed_files": sorted(existing_files),
         "zip_ready": False,
@@ -1487,7 +1537,7 @@ def export_start(video_id):
 
     t = threading.Thread(
         target=_run_export_task,
-        args=(video_id, cuts, video_path, export_dir),
+        args=(video_id, cuts, video_path, export_dir, format_type),
         daemon=True
     )
     t.start()

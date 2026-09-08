@@ -1278,9 +1278,39 @@
 
             <div style="display:flex; height:calc(100vh - 80px); overflow:hidden;">
                 <div style="flex:1; padding:24px 32px; overflow-y:auto;">
-                    <div class="section-title" style="margin-bottom:20px;">
+                    <div class="section-title" style="margin-bottom:16px;">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/></svg>
                         Cortes Detectados
+                    </div>
+
+                    <!-- FORMAT SELECTOR BAR (REELS AUTO-REFRAME & SMART TRACKING) -->
+                    <div style="background:var(--bg-card); border:1px solid var(--border); border-radius:14px; padding:14px 18px; margin-bottom:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:14px;">
+                        <div style="display:flex; align-items:center; gap:12px;">
+                            <div style="width:40px; height:40px; border-radius:10px; background:rgba(255,107,0,0.12); border:1px solid rgba(255,107,0,0.25); display:flex; align-items:center; justify-content:center; font-size:20px;">
+                                📱
+                            </div>
+                            <div>
+                                <div style="font-size:13px; font-weight:700; color:var(--text-primary); display:flex; align-items:center; gap:8px;">
+                                    Formato do Vídeo (Aspect Ratio)
+                                    <span class="cut-badge" style="background:rgba(255,107,0,0.15); color:var(--accent); font-size:10px; font-weight:700;">Reels / TikTok / Shorts</span>
+                                </div>
+                                <div style="font-size:12px; color:var(--text-muted); margin-top:2px;">Enquadramento vertical 9:16 com acompanhamento inteligente de movimento</div>
+                            </div>
+                        </div>
+                        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                            <button type="button" class="btn btn-primary" id="fmt_reels_smart" onclick="setExportFormat('reels_smart')" style="padding:7px 14px; font-size:12px; display:flex; align-items:center; gap:6px;" title="9:16 vertical preenchendo a tela e acompanhando ativamente o rosto da pessoa">
+                                <span>🎯</span> <b>Reels Inteligente (Seguir Rosto)</b>
+                            </button>
+                            <button type="button" class="btn btn-outline" id="fmt_reels_blur" onclick="setExportFormat('reels_blur')" style="padding:7px 12px; font-size:12px; display:flex; align-items:center; gap:6px;" title="9:16 vertical mantendo o vídeo centralizado com fundo desfocado">
+                                <span>✨</span> Reels Blur (Fundo Desfocado)
+                            </button>
+                            <button type="button" class="btn btn-outline" id="fmt_reels_crop" onclick="setExportFormat('reels_crop')" style="padding:7px 12px; font-size:12px; display:flex; align-items:center; gap:6px;" title="9:16 vertical com corte central fixo">
+                                <span>✂️</span> Reels Crop (Fixo)
+                            </button>
+                            <button type="button" class="btn btn-outline" id="fmt_original" onclick="setExportFormat('original')" style="padding:7px 12px; font-size:12px; display:flex; align-items:center; gap:6px;" title="16:9 proporção original sem barras ou cortes">
+                                <span>🖥️</span> Original (16:9)
+                            </button>
+                        </div>
                     </div>
 
                     <div class="cuts-actions" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:16px;">
@@ -2614,6 +2644,41 @@
             showToast('Download do pacote ZIP iniciado!', 'success');
         }
 
+        let currentExportFormat = localStorage.getItem('clipador_export_format') || 'reels_smart';
+
+        function setExportFormat(fmt) {
+            currentExportFormat = fmt;
+            localStorage.setItem('clipador_export_format', fmt);
+            updateExportFormatUI();
+            var names = {
+                'reels_smart': 'Reels Inteligente (Seguir Rosto)',
+                'reels_blur': 'Reels Blur (Fundo Desfocado)',
+                'reels_crop': 'Reels Crop (Fixo)',
+                'original': 'Original (16:9)'
+            };
+            showToast('Formato definido: ' + (names[fmt] || fmt), 'info');
+        }
+
+        function updateExportFormatUI() {
+            var formats = ['reels_smart', 'reels_blur', 'reels_crop', 'original'];
+            formats.forEach(function(f) {
+                var btn = document.getElementById('fmt_' + f);
+                if (btn) {
+                    if (f === currentExportFormat) {
+                        btn.className = 'btn btn-primary';
+                        btn.style.background = 'var(--accent)';
+                        btn.style.borderColor = 'var(--accent)';
+                        btn.style.color = '#fff';
+                    } else {
+                        btn.className = 'btn btn-outline';
+                        btn.style.background = 'transparent';
+                        btn.style.borderColor = 'var(--border)';
+                        btn.style.color = 'var(--text-secondary)';
+                    }
+                }
+            });
+        }
+
         async function exportCuts(sel) {
             if (!currentVideoId) {
                 showToast('Nenhum vídeo carregado', 'warning');
@@ -2626,13 +2691,21 @@
                 return;
             }
 
+            var formatLabels = {
+                'reels_smart': 'Reels 9:16 (Auto-Reframe / Seguir Rosto)',
+                'reels_blur': 'Reels 9:16 (Fundo Desfocado)',
+                'reels_crop': 'Reels 9:16 (Crop Central)',
+                'original': 'Original (16:9)'
+            };
+            var formatLabel = formatLabels[currentExportFormat] || currentExportFormat;
+
             openExportModal();
             updateExportModalUI({
                 status: 'running',
                 current: 0,
                 total: ids.length,
                 percent: 0,
-                current_title: 'Preparando exportação de ' + ids.length + ' corte(s) selecionado(s)...',
+                current_title: 'Preparando exportação [' + formatLabel + '] de ' + ids.length + ' corte(s)...',
                 current_file: '',
                 completed_files: []
             });
@@ -2641,7 +2714,7 @@
                 var r = await fetch('/export/start/' + currentVideoId, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({selected_ids: ids, cuts: cuts})
+                    body: JSON.stringify({selected_ids: ids, cuts: cuts, format_type: currentExportFormat})
                 });
 
                 if (r.ok) {
@@ -3119,6 +3192,7 @@
             checkFFmpeg();
             syncConfig();
             loadGeminiConfig();
+            updateExportFormatUI();
             restoreActiveSession();
         });
     </script>

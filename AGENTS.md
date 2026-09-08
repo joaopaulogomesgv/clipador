@@ -78,6 +78,18 @@ clipador/
 * A rota `/export/start/<video_id>` aceita `selected_ids`. Se o usuário selecionar apenas 3 ou 5 cortes, apenas esses são renderizados via FFmpeg e compactados no `cortes.zip`.
 * Renderização multithread com `ThreadPoolExecutor` utilizando re-encoding ultrarrápido (`-c:v libx264 -preset ultrafast -crf 22 -c:a aac -b:a 192k`).
 
+### 4.5. Auto-Reframe Inteligente e Formato Reels 9:16 (`core/face_tracker.py`)
+* **Detecção Facial em Tempo Real**: Utiliza a rede neural **OpenCV YuNet (`face_detection_yunet_2023mar.onnx`)** com amostragem rápida a 1 fps para extrair a trajetória horizontal do locutor ativo (`face_center_x`).
+* **Suavização Cinematográfica**:
+  * *Dead-zone (Inércia de Câmera)*: Variações menores que 20px são ignoradas para evitar trepidações.
+  * *Smooth Pan*: Média móvel exponencial ($\alpha = 0.35$) para deslocar o enquadramento suavemente imitando um operador de câmera profissional.
+  * *Detecção de Troca de Câmera (Jump Cuts)*: Deslocamentos súbitos maiores que 280px cortam a imagem instantaneamente para a nova pessoa.
+* **Formatos de Exportação Suportados**:
+  * `reels_smart`: Preenche a tela vertical 1080x1920 acompanhando o rosto da pessoa (padrão).
+  * `reels_blur`: Vídeo original 16:9 centralizado com barras superior e inferior preenchidas em desfoque (*boxblur*).
+  * `reels_crop`: Corte central fixo 9:16 (1080x1920).
+  * `original`: Proporção horizontal original 16:9.
+
 ---
 
 ## 5. Endpoints da API REST
