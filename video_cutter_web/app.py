@@ -343,7 +343,7 @@ def delete_video_cuts(video_id):
 
     ids_set = set(int(x) for x in ids_to_delete)
     current_cuts = video.get("cuts", [])
-    remaining_cuts = [c for c in current_cuts if c["id"] not in ids_set]
+    remaining_cuts = [c for c in current_cuts if int(c.get("id", 0)) not in ids_set]
 
     # Re-index remaining cuts sequentially
     for idx, c in enumerate(remaining_cuts):

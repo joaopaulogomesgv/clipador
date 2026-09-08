@@ -1651,6 +1651,21 @@
         <span style="font-size:11px; color:var(--accent); text-decoration:underline;">Ver</span>
     </div>
 
+    <!-- CUSTOM CONFIRMATION MODAL (never blocked by browser popup blockers) -->
+    <div id="confirmActionModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.8); backdrop-filter:blur(8px); z-index:999999; align-items:center; justify-content:center; padding:16px;">
+        <div style="background:var(--bg-card); border:1px solid var(--border); border-radius:18px; width:100%; max-width:440px; padding:26px; box-shadow:0 25px 60px -15px rgba(0,0,0,0.9); text-align:center;">
+            <div id="confirmModalIcon" style="width:54px; height:54px; border-radius:14px; background:rgba(239,68,68,0.15); border:1px solid rgba(239,68,68,0.3); display:flex; align-items:center; justify-content:center; font-size:26px; margin:0 auto 16px auto;">
+                🗑️
+            </div>
+            <h3 id="confirmModalTitle" style="font-size:18px; font-weight:700; color:var(--text-primary); margin:0 0 10px 0;">Confirmar Ação</h3>
+            <p id="confirmModalMessage" style="font-size:13px; color:var(--text-secondary); line-height:1.5; margin:0 0 22px 0;">Você tem certeza que deseja realizar esta ação?</p>
+            <div style="display:flex; justify-content:center; gap:12px;">
+                <button class="btn btn-outline" id="confirmModalCancelBtn" onclick="closeConfirmModal()" style="min-width:110px; padding:9px 16px;">Cancelar</button>
+                <button class="btn btn-primary" id="confirmModalActionBtn" style="background:#ef4444; border:none; min-width:130px; padding:9px 18px; font-weight:600;">Confirmar</button>
+            </div>
+        </div>
+    </div>
+
 
     <style>
         .toggle {
@@ -2063,7 +2078,7 @@
                         '<div style="display:flex; gap:6px; align-items:center;">' +
                             '<span class="cut-badge" style="background:' + scoreBg + '; color:' + scoreColor + '; border:1px solid ' + scoreBorder + '; font-weight:700;">🔥 ' + score + '/100</span>' +
                             hookBadge +
-                            '<button class="btn-icon" style="background:transparent; border:none; color:var(--text-muted); cursor:pointer; font-size:13px; padding:2px 6px; border-radius:4px; transition:all 0.15s;" onmouseover="this.style.color=\'#ef4444\'; this.style.background=\'rgba(239,68,68,0.1)\'" onmouseout="this.style.color=\'var(--text-muted)\'; this.style.background=\'transparent\'" onclick="event.stopPropagation(); deleteSingleCut(' + cut.id + ')" title="Excluir este corte">🗑️</button>' +
+                            '<button class="btn-icon" style="background:transparent; border:none; color:var(--text-muted); cursor:pointer; font-size:13px; padding:2px 6px; border-radius:4px; transition:all 0.15s;" onmouseover="this.style.color=\'#ef4444\'; this.style.background=\'rgba(239,68,68,0.1)\'" onmouseout="this.style.color=\'var(--text-muted)\'; this.style.background=\'transparent\'" onclick="deleteSingleCut(event, ' + cut.id + ')" title="Excluir este corte">🗑️</button>' +
                         '</div>' +
                     '</div>' +
                     '<div style="padding-left:26px;">' +
@@ -2087,52 +2102,133 @@
             updateExportButtonLabels();
         }
 
-        async function deleteSingleCut(cutId) {
-            if (!currentVideoId) return;
-            if (!confirm('Excluir este corte da lista?')) return;
+        let confirmModalCallback = null;
+
+        function openConfirmModal(options) {
+            var modal = document.getElementById('confirmActionModal');
+            var title = document.getElementById('confirmModalTitle');
+            var msg = document.getElementById('confirmModalMessage');
+            var icon = document.getElementById('confirmModalIcon');
+            var btn = document.getElementById('confirmModalActionBtn');
+            if (!modal) return;
+            if (title && options.title) title.textContent = options.title;
+            if (msg && options.message) msg.innerHTML = options.message;
+            if (icon && options.icon) icon.textContent = options.icon;
+            if (btn) {
+                btn.textContent = options.confirmText || 'Confirmar';
+                btn.style.background = options.confirmColor || '#ef4444';
+            }
+            confirmModalCallback = options.onConfirm || null;
+            modal.style.display = 'flex';
+        }
+
+        function closeConfirmModal() {
+            var modal = document.getElementById('confirmActionModal');
+            if (modal) modal.style.display = 'none';
+            confirmModalCallback = null;
+        }
+
+        document.addEventListener('DOMContentLoaded', function() {
+            var btn = document.getElementById('confirmModalActionBtn');
+            if (btn) {
+                btn.onclick = function() {
+                    var cb = confirmModalCallback;
+                    closeConfirmModal();
+                    if (cb) cb();
+                };
+            }
+        });
+
+        async function getEffectiveVideoId() {
+            if (currentVideoId) return currentVideoId;
+            var saved = localStorage.getItem('clipador_active_video_id');
+            if (saved) {
+                currentVideoId = saved;
+                return currentVideoId;
+            }
+            var v = document.getElementById('videoPlayer');
+            if (v && v.getAttribute('data-loaded-id')) {
+                currentVideoId = v.getAttribute('data-loaded-id');
+                return currentVideoId;
+            }
             try {
-                var r = await fetch('/api/video/' + currentVideoId + '/cuts/delete', {
+                var r = await fetch('/api/videos/latest');
+                if (r.ok) {
+                    var d = await r.json();
+                    if (d && d.video_id) {
+                        currentVideoId = d.video_id;
+                        localStorage.setItem('clipador_active_video_id', currentVideoId);
+                        return currentVideoId;
+                    }
+                }
+            } catch(e) {}
+            return null;
+        }
+
+        async function deleteSingleCut(event, cutId) {
+            if (event) {
+                event.stopPropagation();
+                event.preventDefault();
+            }
+            var vid = await getEffectiveVideoId();
+            if (!vid) {
+                showToast('Identificador de vídeo não encontrado', 'error');
+                return;
+            }
+
+            // Optimistic deletion: immediately remove from UI so user feels instantaneous responsiveness
+            var oldCuts = cuts.slice();
+            cuts = cuts.filter(function(c) { return String(c.id) !== String(cutId); });
+            cuts.forEach(function(c, idx) { c.id = idx + 1; });
+            renderCuts();
+            setText('cutsBadge', cuts.length);
+            setText('statCuts', cuts.length);
+            if (cuts.length === 0) {
+                setDisplay('cutsBadge', 'none');
+            }
+            showToast('Corte excluído!', 'info');
+
+            try {
+                var r = await fetch('/api/video/' + vid + '/cuts/delete', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({ id: cutId })
                 });
                 var d = await r.json();
-                if (r.ok) {
-                    cuts = cuts.filter(function(c) { return c.id !== cutId; });
-                    cuts.forEach(function(c, idx) { c.id = idx + 1; });
+                if (!r.ok) {
+                    cuts = oldCuts;
                     renderCuts();
-                    setText('cutsBadge', cuts.length);
-                    setText('statCuts', cuts.length);
-                    if (cuts.length === 0) {
-                        setDisplay('cutsBadge', 'none');
-                    }
-                    showToast('Corte excluído com sucesso!', 'success');
-                } else {
-                    showToast(d.error || 'Erro ao excluir corte', 'error');
+                    showToast(d.error || 'Erro ao excluir corte no servidor', 'error');
                 }
             } catch(e) {
-                showToast(e.message, 'error');
+                cuts = oldCuts;
+                renderCuts();
+                showToast('Erro de conexão ao excluir corte', 'error');
             }
         }
 
         async function deleteSelectedCuts() {
-            if (!currentVideoId) return;
-            var selectedIds = cuts.filter(function(c) { return c.selected; }).map(function(c) { return c.id; });
-            if (!selectedIds.length) {
-                showToast('Nenhum corte selecionado para exclusão', 'info');
+            var vid = await getEffectiveVideoId();
+            if (!vid) {
+                showToast('Nenhum vídeo ativo para exclusão', 'error');
                 return;
             }
-            if (!confirm('Deseja realmente excluir os ' + selectedIds.length + ' corte(s) selecionado(s)?')) return;
-            try {
-                var r = await fetch('/api/video/' + currentVideoId + '/cuts/delete', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ ids: selectedIds })
-                });
-                var d = await r.json();
-                if (r.ok) {
-                    var selSet = new Set(selectedIds);
-                    cuts = cuts.filter(function(c) { return !selSet.has(c.id); });
+            var selectedIds = cuts.filter(function(c) { return c.selected; }).map(function(c) { return c.id; });
+            if (!selectedIds.length) {
+                showToast('Nenhum corte selecionado. Marque os cortes desejados primeiro.', 'info');
+                return;
+            }
+
+            openConfirmModal({
+                title: 'Excluir Cortes Selecionados?',
+                message: 'Deseja realmente excluir os <b>' + selectedIds.length + ' corte(s)</b> selecionado(s)?',
+                confirmText: 'Excluir (' + selectedIds.length + ')',
+                confirmColor: '#ef4444',
+                icon: '🗑️',
+                onConfirm: async function() {
+                    var oldCuts = cuts.slice();
+                    var selSet = new Set(selectedIds.map(function(x) { return String(x); }));
+                    cuts = cuts.filter(function(c) { return !selSet.has(String(c.id)); });
                     cuts.forEach(function(c, idx) { c.id = idx + 1; });
                     renderCuts();
                     setText('cutsBadge', cuts.length);
@@ -2141,30 +2237,46 @@
                         setDisplay('cutsBadge', 'none');
                     }
                     showToast(selectedIds.length + ' corte(s) excluído(s)!', 'success');
-                } else {
-                    showToast(d.error || 'Erro ao excluir cortes', 'error');
+
+                    try {
+                        var r = await fetch('/api/video/' + vid + '/cuts/delete', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({ ids: selectedIds })
+                        });
+                        var d = await r.json();
+                        if (!r.ok) {
+                            cuts = oldCuts;
+                            renderCuts();
+                            showToast(d.error || 'Erro ao excluir cortes no servidor', 'error');
+                        }
+                    } catch(e) {
+                        cuts = oldCuts;
+                        renderCuts();
+                        showToast('Erro de conexão ao excluir cortes', 'error');
+                    }
                 }
-            } catch(e) {
-                showToast(e.message, 'error');
-            }
+            });
         }
 
         async function clearAllCuts() {
-            if (!currentVideoId) {
+            var vid = await getEffectiveVideoId();
+            if (!vid) {
                 showToast('Nenhum vídeo carregado', 'info');
                 return;
             }
             if (!cuts.length) {
-                showToast('Não há cortes na lista para apagar', 'info');
+                showToast('A lista de cortes já está vazia!', 'info');
                 return;
             }
-            if (!confirm('Tem certeza que deseja apagar TODOS os ' + cuts.length + ' cortes gerados e arquivos exportados para começar novos cortes?')) return;
-            try {
-                var r = await fetch('/api/video/' + currentVideoId + '/cuts/clear', {
-                    method: 'POST'
-                });
-                var d = await r.json();
-                if (r.ok) {
+
+            openConfirmModal({
+                title: 'Apagar Todos os Cortes?',
+                message: 'Tem certeza que deseja apagar <b>todos os ' + cuts.length + ' cortes</b> gerados e arquivos exportados?<br><br><span style="color:var(--text-muted); font-size:12px;">A lista será limpa para você poder realizar uma nova análise ou recalcular ganchos.</span>',
+                confirmText: 'Apagar Todos',
+                confirmColor: '#ef4444',
+                icon: '⚠️',
+                onConfirm: async function() {
                     cuts = [];
                     renderCuts();
                     setDisplay('cutsBadge', 'none');
@@ -2183,33 +2295,47 @@
                     if (status) status.className = 'yt-status';
                     if (text) text.innerHTML = 'Pronto para nova análise';
 
-                    showToast('Todos os cortes foram apagados com sucesso! Você já pode realizar uma nova análise.', 'success');
-                } else {
-                    showToast(d.error || 'Erro ao apagar cortes', 'error');
+                    showToast('Todos os cortes foram apagados com sucesso!', 'success');
+
+                    try {
+                        var r = await fetch('/api/video/' + vid + '/cuts/clear', {
+                            method: 'POST'
+                        });
+                        var d = await r.json();
+                        if (!r.ok) {
+                            showToast(d.error || 'Erro ao limpar cortes no servidor', 'error');
+                        }
+                    } catch(e) {
+                        showToast('Erro de conexão ao limpar cortes', 'error');
+                    }
                 }
-            } catch(e) {
-                showToast(e.message, 'error');
-            }
+            });
         }
 
         async function clearExportedFiles() {
-            if (!currentVideoId) return;
-            if (!confirm('Deseja descartar os arquivos de vídeo exportados (MP4 e ZIP)? Os cortes na lista permanecerão intactos.')) return;
-            try {
-                var r = await fetch('/api/video/' + currentVideoId + '/exports/clear', {
-                    method: 'POST'
-                });
-                var d = await r.json();
-                if (r.ok) {
+            var vid = await getEffectiveVideoId();
+            if (!vid) return;
+
+            openConfirmModal({
+                title: 'Descartar Arquivos Exportados?',
+                message: 'Deseja descartar os arquivos MP4 renderizados e o arquivo ZIP?<br><br><span style="color:var(--text-muted); font-size:12px;">Os cortes na lista continuarão intactos, apenas as renderizações serão apagadas para liberar espaço em disco.</span>',
+                confirmText: 'Descartar Arquivos',
+                confirmColor: '#ef4444',
+                icon: '📦',
+                onConfirm: async function() {
                     var alertBanner = document.getElementById('exportAlertBanner');
                     if (alertBanner) alertBanner.style.display = 'none';
                     showToast('Arquivos exportados descartados com sucesso!', 'success');
-                } else {
-                    showToast(d.error || 'Erro ao descartar arquivos', 'error');
+
+                    try {
+                        await fetch('/api/video/' + vid + '/exports/clear', {
+                            method: 'POST'
+                        });
+                    } catch(e) {
+                        console.error('Erro ao descartar arquivos:', e);
+                    }
                 }
-            } catch(e) {
-                showToast(e.message, 'error');
-            }
+            });
         }
 
         function toggleCut(id, sel) {
