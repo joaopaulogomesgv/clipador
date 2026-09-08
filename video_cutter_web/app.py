@@ -572,7 +572,7 @@ def generate_smart_cuts(whisper_segments, total_duration, min_duration=40.0, max
     cfg = get_config()
     use_gemini = cfg.get("use_gemini", True)
     gemini_key = cfg.get("gemini_api_key", "").strip()
-    gemini_model = cfg.get("gemini_model", "gemini-2.0-flash")
+    gemini_model = cfg.get("gemini_model", "gemini-3.7-flash")
 
     if use_gemini and gemini_key:
         try:
@@ -663,14 +663,17 @@ def _do_analyze(analysis_id, video_id, video_path, total_duration,
                     "whisper_segments": whisper_segments[:50],
                     "cuts": cuts
                 }
+                is_gemini = any(c.get("ai_curated") for c in cuts)
+                engine_name = f"Gemini AI ({cuts[0].get('ai_model', '3.7-Flash')})" if (is_gemini and cuts and cuts[0].get("ai_model")) else ("Gemini AI" if is_gemini else "Heurística Local")
+                step_msg = f'{len(cuts)} cortes virais selecionados com {engine_name} em {total_elapsed}!'
                 prog.update({
                     'status': 'done',
                     'percent': 100,
-                    'step': f'{len(cuts)} cortes inteligentes identificados em {total_elapsed}! (Cache Whisper)',
+                    'step': step_msg,
                     'done': True,
                     'result': result
                 })
-                logger.info(f"Fast-path analysis completed in {total_elapsed} ({len(cuts)} cuts)")
+                logger.info(f"Fast-path analysis completed in {total_elapsed} ({len(cuts)} cuts via {engine_name})")
                 return
 
         # SLOW PATH: If no cache or not using whisper

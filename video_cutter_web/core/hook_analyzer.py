@@ -72,8 +72,8 @@ FILLER_STARTERS = [
 
 # High-retention topic starter patterns (matched on normalized text)
 TOPIC_PATTERNS = [
-    # 1. Direct Questions & Audience Superchats (Highest retention)
-    (r'\b(pergunta (do|da|de)|mandou aqui|superchat|duvida do|o pessoal perguntou)\b', 95, "Pergunta do Público"),
+    # 1. Direct Questions & Audience Inquiries (Moderate retention)
+    (r'\b(pergunta (do|da|de)|mandou aqui|superchat|duvida do|o pessoal perguntou)\b', 60, "Pergunta do Público"),
     (r'\b(voce (sabia|ja pensou|ja ouviu|acha|acredita|viu))\b', 92, "Curiosidade / Provocação"),
     (r'\b(qual (e|foi|seria) (o|a) (maior|melhor|pior|principal|diferenca|segredo|problema|desafio))\b', 95, "Pergunta Chave"),
     (r'\b(como (funciona|aconteceu|surgiu|que voce|foi feito|e possivel|se explica))\b', 90, "Como Funciona"),
@@ -323,9 +323,13 @@ def find_smart_cuts(whisper_segments, total_duration, min_duration=40.0, max_dur
     # Sort by score descending (best viral hooks first)
     cuts.sort(key=lambda x: x["score"], reverse=True)
 
+    # Cap to at most top 15 best cuts
+    cuts = cuts[:15]
+
     # Reassign clean IDs
     for idx, c in enumerate(cuts):
         c["id"] = idx + 1
+        c["engine"] = "Local (Heurística)"
 
-    logger.info(f"Generated {len(cuts)} intelligent topic cuts")
+    logger.info(f"Generated {len(cuts)} intelligent topic cuts (capped at top 15)")
     return cuts

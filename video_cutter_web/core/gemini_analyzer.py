@@ -40,8 +40,8 @@ def save_config(cfg):
 
 def resolve_model(model):
     """Maps deprecated model names to active working models."""
-    if not model or "2.0" in model or "1.5" in model or "2.5" in model:
-        return "gemini-3.6-flash"
+    if not model or "2.0" in model or "1.5" in model or "2.5" in model or "3.6" in model:
+        return "gemini-3.7-flash"
     return model
 
 
@@ -49,7 +49,7 @@ def resolve_model(model):
 HTTP_CLIENT = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
-def test_gemini_key(api_key, model="gemini-3.6-flash"):
+def test_gemini_key(api_key, model="gemini-3.7-flash"):
     """
     Tests if a Gemini API key is valid with a minimal prompt.
     Returns (success: bool, message: str).
@@ -261,8 +261,6 @@ Retorne EXCLUSIVAMENTE um array JSON:
 
     user_prompt = f"Aqui estão as sentenças numeradas de todo o podcast (duração total: {total_duration:.1f}s):\n\n{full_transcript_text}"
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-
     payload = {
         "contents": [
             {"role": "user", "parts": [{"text": user_prompt}]}
@@ -276,25 +274,39 @@ Retorne EXCLUSIVAMENTE um array JSON:
         }
     }
 
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"}
-    )
+    fallback_chain = [model, "gemini-3.7-flash", "gemini-flash-latest", "gemini-3.5-flash"]
+    seen = set()
+    models_to_try = [m for m in fallback_chain if not (m in seen or seen.add(m))]
 
-    try:
-        with HTTP_CLIENT.open(req, timeout=75) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        if e.code == 404 and model != "gemini-flash-latest":
-            logger.info("Model 404, falling back to gemini-flash-latest...")
-            return analyze_with_gemini(whisper_segments, total_duration, min_duration, max_duration, api_key, model="gemini-flash-latest")
-        err_body = e.read().decode("utf-8", errors="ignore")
-        logger.error(f"Gemini API error {e.code}: {err_body}")
-        raise RuntimeError(f"Erro na API do Gemini (HTTP {e.code}): {err_body[:200]}")
-    except Exception as e:
-        logger.error(f"Failed to call Gemini API: {e}")
-        raise RuntimeError(f"Erro ao conectar com a API do Gemini: {e}")
+    data = None
+    model_used = None
+    last_err = ""
+
+    for curr_model in models_to_try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{curr_model}:generateContent?key={api_key}"
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"}
+        )
+        try:
+            logger.info(f"Analyzing transcript with Gemini AI ({curr_model})...")
+            with HTTP_CLIENT.open(req, timeout=85) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                model_used = curr_model
+                logger.info(f"Gemini model {curr_model} succeeded!")
+                break
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode("utf-8", errors="ignore")
+            last_err = f"HTTP {e.code}: {err_body[:120]}"
+            logger.warning(f"Gemini model {curr_model} failed ({last_err}), attempting next fallback...")
+        except Exception as e:
+            last_err = str(e)
+            logger.warning(f"Gemini model {curr_model} connection failed ({last_err}), attempting next fallback...")
+
+    if not data:
+        logger.error(f"All Gemini models in fallback chain failed. Last error: {last_err}")
+        raise RuntimeError(f"Erro na API do Gemini (todos os modelos esgotados): {last_err}")
 
     try:
         candidate_text = data["candidates"][0]["content"]["parts"][0]["text"]
@@ -344,6 +356,8 @@ Retorne EXCLUSIVAMENTE um array JSON:
     for idx, c in enumerate(aligned_cuts):
         c["id"] = idx + 1
         c["full_text"] = c.get("summary") or c.get("hook", "")
+        c["ai_model"] = model_used
+        c["engine"] = f"Gemini AI ({model_used})"
 
-    logger.info(f"Gemini generated {len(aligned_cuts)} perfectly aligned viral cuts!")
+    logger.info(f"Gemini ({model_used}) generated {len(aligned_cuts)} perfectly aligned viral cuts!")
     return aligned_cuts
