@@ -93,6 +93,9 @@ clipador/
 | `GET` | `/analyze/progress/<analysis_id>` | Polling do percentual e etapa da análise |
 | `GET` | `/analyze/result/<analysis_id>` | Retorna os cortes gerados após conclusão |
 | `POST` | `/reanalyze_hooks/<video_id>` | Recalcula ganchos e cortes instantaneamente via cache |
+| `POST` | `/api/video/<video_id>/cuts/clear` | Remove todos os cortes e arquivos exportados para reiniciar análises do zero |
+| `POST` | `/api/video/<video_id>/cuts/delete` | Exclui cortes específicos informados por ID ou lista de IDs |
+| `POST` | `/api/video/<video_id>/exports/clear` | Descarta os arquivos de vídeo exportados (MP4 e ZIP) preservando a lista |
 | `POST` | `/export/start/<video_id>` | Inicia a renderização dos cortes selecionados em segundo plano |
 | `GET` | `/export/status/<video_id>` | Polling do progresso de exportação e geração do ZIP |
 | `GET` | `/export/download/<video_id>` | Download do pacote `cortes.zip` |

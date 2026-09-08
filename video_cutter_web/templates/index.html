@@ -1284,9 +1284,11 @@
                     </div>
 
                     <div class="cuts-actions" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:16px;">
-                        <div style="display:flex; gap:8px;">
+                        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
                             <button class="btn btn-secondary" onclick="selectAllCuts(true)">Selecionar Todos</button>
                             <button class="btn btn-outline" onclick="selectAllCuts(false)">Desmarcar Todos</button>
+                            <button class="btn btn-outline" style="border-color:rgba(239,68,68,0.4); color:#ef4444;" onclick="deleteSelectedCuts()" title="Excluir apenas os cortes selecionados">🗑️ Excluir Selecionados</button>
+                            <button class="btn btn-outline" style="border-color:rgba(239,68,68,0.5); color:#ef4444; background:rgba(239,68,68,0.06);" onclick="clearAllCuts()" title="Apagar todos os cortes desta lista para começar novos">🗑️ Limpar Todos</button>
                         </div>
                         <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
                             <span style="font-size:12px; color:var(--text-muted);">Visualização:</span>
@@ -1306,9 +1308,10 @@
                                 <div id="exportBannerSub" style="font-size:12px; color:var(--text-secondary);">Os cortes já foram renderizados pelo FFmpeg e estão prontos.</div>
                             </div>
                         </div>
-                        <div style="display:flex; gap:8px;">
+                        <div style="display:flex; gap:8px; align-items:center;">
                             <button class="btn btn-outline" style="padding:6px 14px; font-size:12px;" onclick="openExportModal()">Ver Detalhes</button>
                             <button class="btn btn-primary" style="padding:6px 16px; font-size:12px; background:linear-gradient(135deg, #10b981, #059669); border:none;" onclick="downloadExportedFile()">📥 Baixar Pacote ZIP</button>
+                            <button class="btn btn-outline" style="padding:6px 12px; font-size:12px; border-color:rgba(239,68,68,0.4); color:#ef4444;" onclick="clearExportedFiles()" title="Descartar arquivos renderizados e liberar espaço">🗑️ Descartar</button>
                         </div>
                     </div>
 
@@ -2002,10 +2005,14 @@
             var container = document.getElementById('cutsListFull');
             var noCuts = document.getElementById('noCutsFull');
             if (!container) return;
-            if (!cuts.length) { if (noCuts) noCuts.style.display = 'block'; return; }
-            if (noCuts) noCuts.style.display = 'none';
             var existing = container.querySelectorAll('.cut-card');
             existing.forEach(function(c) { c.remove(); });
+            if (!cuts.length) { 
+                if (noCuts) noCuts.style.display = 'block'; 
+                updateExportButtonLabels();
+                return; 
+            }
+            if (noCuts) noCuts.style.display = 'none';
 
             if (currentVideoId) {
                 checkExportStatus(currentVideoId, false);
@@ -2056,6 +2063,7 @@
                         '<div style="display:flex; gap:6px; align-items:center;">' +
                             '<span class="cut-badge" style="background:' + scoreBg + '; color:' + scoreColor + '; border:1px solid ' + scoreBorder + '; font-weight:700;">🔥 ' + score + '/100</span>' +
                             hookBadge +
+                            '<button class="btn-icon" style="background:transparent; border:none; color:var(--text-muted); cursor:pointer; font-size:13px; padding:2px 6px; border-radius:4px; transition:all 0.15s;" onmouseover="this.style.color=\'#ef4444\'; this.style.background=\'rgba(239,68,68,0.1)\'" onmouseout="this.style.color=\'var(--text-muted)\'; this.style.background=\'transparent\'" onclick="event.stopPropagation(); deleteSingleCut(' + cut.id + ')" title="Excluir este corte">🗑️</button>' +
                         '</div>' +
                     '</div>' +
                     '<div style="padding-left:26px;">' +
@@ -2069,7 +2077,7 @@
                     '</div>';
 
                 card.onclick = function(e) { 
-                    if (e.target.type !== 'checkbox') { 
+                    if (e.target.type !== 'checkbox' && !e.target.closest('button')) { 
                         video.currentTime = cut.start; 
                         video.play(); 
                     }
@@ -2077,6 +2085,131 @@
                 container.appendChild(card);
             });
             updateExportButtonLabels();
+        }
+
+        async function deleteSingleCut(cutId) {
+            if (!currentVideoId) return;
+            if (!confirm('Excluir este corte da lista?')) return;
+            try {
+                var r = await fetch('/api/video/' + currentVideoId + '/cuts/delete', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ id: cutId })
+                });
+                var d = await r.json();
+                if (r.ok) {
+                    cuts = cuts.filter(function(c) { return c.id !== cutId; });
+                    cuts.forEach(function(c, idx) { c.id = idx + 1; });
+                    renderCuts();
+                    setText('cutsBadge', cuts.length);
+                    setText('statCuts', cuts.length);
+                    if (cuts.length === 0) {
+                        setDisplay('cutsBadge', 'none');
+                    }
+                    showToast('Corte excluído com sucesso!', 'success');
+                } else {
+                    showToast(d.error || 'Erro ao excluir corte', 'error');
+                }
+            } catch(e) {
+                showToast(e.message, 'error');
+            }
+        }
+
+        async function deleteSelectedCuts() {
+            if (!currentVideoId) return;
+            var selectedIds = cuts.filter(function(c) { return c.selected; }).map(function(c) { return c.id; });
+            if (!selectedIds.length) {
+                showToast('Nenhum corte selecionado para exclusão', 'info');
+                return;
+            }
+            if (!confirm('Deseja realmente excluir os ' + selectedIds.length + ' corte(s) selecionado(s)?')) return;
+            try {
+                var r = await fetch('/api/video/' + currentVideoId + '/cuts/delete', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ ids: selectedIds })
+                });
+                var d = await r.json();
+                if (r.ok) {
+                    var selSet = new Set(selectedIds);
+                    cuts = cuts.filter(function(c) { return !selSet.has(c.id); });
+                    cuts.forEach(function(c, idx) { c.id = idx + 1; });
+                    renderCuts();
+                    setText('cutsBadge', cuts.length);
+                    setText('statCuts', cuts.length);
+                    if (cuts.length === 0) {
+                        setDisplay('cutsBadge', 'none');
+                    }
+                    showToast(selectedIds.length + ' corte(s) excluído(s)!', 'success');
+                } else {
+                    showToast(d.error || 'Erro ao excluir cortes', 'error');
+                }
+            } catch(e) {
+                showToast(e.message, 'error');
+            }
+        }
+
+        async function clearAllCuts() {
+            if (!currentVideoId) {
+                showToast('Nenhum vídeo carregado', 'info');
+                return;
+            }
+            if (!cuts.length) {
+                showToast('Não há cortes na lista para apagar', 'info');
+                return;
+            }
+            if (!confirm('Tem certeza que deseja apagar TODOS os ' + cuts.length + ' cortes gerados e arquivos exportados para começar novos cortes?')) return;
+            try {
+                var r = await fetch('/api/video/' + currentVideoId + '/cuts/clear', {
+                    method: 'POST'
+                });
+                var d = await r.json();
+                if (r.ok) {
+                    cuts = [];
+                    renderCuts();
+                    setDisplay('cutsBadge', 'none');
+                    setText('cutsBadge', '0');
+                    setText('statCuts', '0');
+                    setDisabled('exportAllBtn', true);
+                    setDisabled('exportSelectedBtn', true);
+                    setDisabled('exportAllBtn2', true);
+                    setDisabled('exportSelectedBtn2', true);
+
+                    var alertBanner = document.getElementById('exportAlertBanner');
+                    if (alertBanner) alertBanner.style.display = 'none';
+
+                    var status = document.getElementById('analysisStatus');
+                    var text = document.getElementById('analysisText');
+                    if (status) status.className = 'yt-status';
+                    if (text) text.innerHTML = 'Pronto para nova análise';
+
+                    showToast('Todos os cortes foram apagados com sucesso! Você já pode realizar uma nova análise.', 'success');
+                } else {
+                    showToast(d.error || 'Erro ao apagar cortes', 'error');
+                }
+            } catch(e) {
+                showToast(e.message, 'error');
+            }
+        }
+
+        async function clearExportedFiles() {
+            if (!currentVideoId) return;
+            if (!confirm('Deseja descartar os arquivos de vídeo exportados (MP4 e ZIP)? Os cortes na lista permanecerão intactos.')) return;
+            try {
+                var r = await fetch('/api/video/' + currentVideoId + '/exports/clear', {
+                    method: 'POST'
+                });
+                var d = await r.json();
+                if (r.ok) {
+                    var alertBanner = document.getElementById('exportAlertBanner');
+                    if (alertBanner) alertBanner.style.display = 'none';
+                    showToast('Arquivos exportados descartados com sucesso!', 'success');
+                } else {
+                    showToast(d.error || 'Erro ao descartar arquivos', 'error');
+                }
+            } catch(e) {
+                showToast(e.message, 'error');
+            }
         }
 
         function toggleCut(id, sel) {

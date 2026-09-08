@@ -292,6 +292,111 @@ def get_latest_video():
     return get_video_details(latest_id)
 
 
+@app.route('/api/video/<video_id>/cuts/clear', methods=['POST'])
+def clear_video_cuts(video_id):
+    video = _ensure_video(video_id)
+    if not video:
+        return jsonify({"error": "Vídeo não encontrado"}), 404
+
+    # 1. Clear in-memory cuts
+    videos[video_id]["cuts"] = []
+
+    # 2. Remove cuts JSON from disk
+    cuts_json_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{video_id}_cuts.json")
+    if os.path.exists(cuts_json_path):
+        try:
+            os.remove(cuts_json_path)
+        except Exception as e:
+            logger.warning(f"Error removing cuts file {cuts_json_path}: {e}")
+
+    # 3. Clear exported clips and zip
+    export_dir = os.path.join(app.config['EXPORT_FOLDER'], video_id)
+    if os.path.exists(export_dir):
+        try:
+            import shutil
+            shutil.rmtree(export_dir)
+            os.makedirs(export_dir, exist_ok=True)
+        except Exception as e:
+            logger.warning(f"Error clearing export dir {export_dir}: {e}")
+
+    # 4. Reset export progress state
+    if video_id in export_progress:
+        del export_progress[video_id]
+
+    return jsonify({"success": True, "message": "Todos os cortes e exportações foram removidos com sucesso!"})
+
+
+@app.route('/api/video/<video_id>/cuts/delete', methods=['POST'])
+def delete_video_cuts(video_id):
+    video = _ensure_video(video_id)
+    if not video:
+        return jsonify({"error": "Vídeo não encontrado"}), 404
+
+    data = request.get_json() or {}
+    ids_to_delete = data.get("ids", [])
+    single_id = data.get("id")
+    if single_id is not None:
+        ids_to_delete.append(single_id)
+
+    if not ids_to_delete:
+        return jsonify({"error": "Nenhum ID de corte informado para exclusão"}), 400
+
+    ids_set = set(int(x) for x in ids_to_delete)
+    current_cuts = video.get("cuts", [])
+    remaining_cuts = [c for c in current_cuts if c["id"] not in ids_set]
+
+    # Re-index remaining cuts sequentially
+    for idx, c in enumerate(remaining_cuts):
+        c["id"] = idx + 1
+
+    videos[video_id]["cuts"] = remaining_cuts
+
+    # Save to disk
+    cuts_json_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{video_id}_cuts.json")
+    try:
+        with open(cuts_json_path, 'w', encoding='utf-8') as f:
+            json.dump(remaining_cuts, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.warning(f"Error saving updated cuts JSON: {e}")
+
+    # Remove deleted individual mp4 exports if present
+    export_dir = os.path.join(app.config['EXPORT_FOLDER'], video_id)
+    if os.path.exists(export_dir):
+        for del_id in ids_set:
+            fpath = os.path.join(export_dir, f"corte_{del_id:03d}.mp4")
+            if os.path.exists(fpath):
+                try:
+                    os.remove(fpath)
+                except Exception:
+                    pass
+        # Remove old zip so next export regenerates fresh zip
+        zip_path = os.path.join(export_dir, "cortes.zip")
+        if os.path.exists(zip_path):
+            try:
+                os.remove(zip_path)
+            except Exception:
+                pass
+
+    return jsonify({"success": True, "remaining_count": len(remaining_cuts), "cuts": remaining_cuts})
+
+
+@app.route('/api/video/<video_id>/exports/clear', methods=['POST'])
+def clear_video_exports(video_id):
+    export_dir = os.path.join(app.config['EXPORT_FOLDER'], video_id)
+    if os.path.exists(export_dir):
+        try:
+            import shutil
+            shutil.rmtree(export_dir)
+            os.makedirs(export_dir, exist_ok=True)
+        except Exception as e:
+            logger.warning(f"Error clearing export dir: {e}")
+
+    if video_id in export_progress:
+        del export_progress[video_id]
+
+    return jsonify({"success": True, "message": "Arquivos exportados descartados."})
+
+
 @app.route('/video/<video_id>')
 def serve_video(video_id):
     logger.debug(f"Serving video: {video_id}")
