@@ -4,6 +4,8 @@ video_cutter/
 # Videos e uploads
 video_cutter_web/uploads/
 video_cutter_web/exports/
+video_cutter_web/config.json
+.env
 
 # Python
 __pycache__/

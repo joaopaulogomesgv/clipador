@@ -1,5 +1,11 @@
 import os
 import sys
+
+# Ensure video_cutter_web directory is in sys.path
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+
 import uuid
 import json
 import subprocess
@@ -33,6 +39,8 @@ videos = {}
 yt_progress = {}
 yt_downloads = {}
 analysis_progress = {}
+export_progress = {}
+export_threads = {}
 
 
 def find_ffmpeg():
@@ -40,7 +48,31 @@ def find_ffmpeg():
         "ffmpeg",
         r"C:\ffmpeg\bin\ffmpeg.exe",
         r"C:\Program Files\ffmpeg\bin\ffmpeg.exe",
+        os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-9.0.1-full_build\bin\ffmpeg.exe"),
     ]
+
+    # Search winget install locations
+    winget_base = os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Microsoft', 'WinGet', 'Links')
+    if os.path.isdir(winget_base):
+        winget_ffmpeg = os.path.join(winget_base, 'ffmpeg.exe')
+        if os.path.exists(winget_ffmpeg):
+            candidates.insert(0, winget_ffmpeg)
+
+    # Search common winget package paths
+    winget_packages = os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Microsoft', 'WinGet', 'Packages')
+    if os.path.isdir(winget_packages):
+        for root, dirs, files in os.walk(winget_packages):
+            if 'ffmpeg.exe' in files:
+                candidates.insert(0, os.path.join(root, 'ffmpeg.exe'))
+                break
+
+    # Also search in PATH-accessible tools directory
+    tools_dir = os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Microsoft', 'WinGet', 'Links')
+    if os.path.isdir(tools_dir):
+        possible = os.path.join(tools_dir, 'ffmpeg.exe')
+        if os.path.exists(possible):
+            candidates.insert(0, possible)
+
     try:
         result = subprocess.run(
             ["where", "ffmpeg"],
@@ -100,10 +132,11 @@ def get_video_info_opencv(video_path):
 def get_video_info(video_path):
     if FFMPEG_PATH:
         try:
-            cmd = [FFMPEG_PATH, "-i", video_path, "-f", "null", "-"]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            cmd = [FFMPEG_PATH, "-i", video_path]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
             info = {}
             for line in result.stderr.split("\n"):
+
                 if "Duration:" in line:
                     duration_str = line.split("Duration:")[1].split(",")[0].strip()
                     parts = duration_str.replace(",", "").split(":")
@@ -191,30 +224,94 @@ def upload_video():
     })
 
 
+def _ensure_video(video_id):
+    if video_id in videos and videos[video_id].get("path") and os.path.exists(videos[video_id]["path"]):
+        return videos[video_id]
+
+    upload_folder = app.config['UPLOAD_FOLDER']
+    for ext in ['.mp4', '.mkv', '.avi', '.mov', '.webm']:
+        p = os.path.join(upload_folder, f"{video_id}{ext}")
+        if os.path.exists(p):
+            info = get_video_info(p)
+            cuts = []
+            cuts_path = os.path.join(upload_folder, f"{video_id}_cuts.json")
+            if os.path.exists(cuts_path):
+                try:
+                    with open(cuts_path, 'r', encoding='utf-8') as f:
+                        cuts = json.load(f)
+                except Exception as e:
+                    logger.warning(f"Failed to load cuts for {video_id}: {e}")
+
+            videos[video_id] = {
+                "id": video_id,
+                "path": p,
+                "filename": f"{video_id}{ext}",
+                "info": info,
+                "cuts": cuts
+            }
+            return videos[video_id]
+    return None
+
+
+@app.route('/api/video/<video_id>', methods=['GET'])
+def get_video_details(video_id):
+    video = _ensure_video(video_id)
+    if not video:
+        return jsonify({"error": "Vídeo não encontrado"}), 404
+
+    trans_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{video_id}_transcription.json")
+    export_dir = os.path.join(app.config['EXPORT_FOLDER'], video_id)
+    zip_path = os.path.join(export_dir, "cortes.zip")
+
+    return jsonify({
+        "video_id": video_id,
+        "filename": video.get("filename", f"{video_id}.mp4"),
+        "info": video.get("info", {}),
+        "cuts": video.get("cuts", []),
+        "has_transcription": os.path.exists(trans_path),
+        "has_export": os.path.exists(zip_path)
+    })
+
+
+@app.route('/api/videos/latest', methods=['GET'])
+def get_latest_video():
+    upload_folder = app.config['UPLOAD_FOLDER']
+    candidates = []
+    if os.path.exists(upload_folder):
+        for f in os.listdir(upload_folder):
+            if any(f.endswith(ext) for ext in ['.mp4', '.mkv', '.avi', '.mov', '.webm']) and not f.startswith('temp_'):
+                full_p = os.path.join(upload_folder, f)
+                vid = os.path.splitext(f)[0]
+                candidates.append((os.path.getmtime(full_p), vid))
+
+    if not candidates:
+        return jsonify({"error": "Nenhum vídeo disponível"}), 404
+
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    latest_id = candidates[0][1]
+    return get_video_details(latest_id)
+
+
 @app.route('/video/<video_id>')
 def serve_video(video_id):
     logger.debug(f"Serving video: {video_id}")
-
-    if video_id not in videos:
-        logger.error(f"Video not found: {video_id}")
+    video = _ensure_video(video_id)
+    if not video:
         return "Video nao encontrado", 404
 
-    video_path = videos[video_id]["path"]
-
+    video_path = video["path"]
     if not os.path.exists(video_path):
-        logger.error(f"File does not exist: {video_path}")
         return "Arquivo nao encontrado", 404
 
     ext = Path(video_path).suffix.lower()
     mimetype = MIMETYPE_MAP.get(ext, 'video/mp4')
-
-    logger.info(f"Serving {video_path} with mimetype {mimetype}")
     return send_file(video_path, mimetype=mimetype)
 
 
 @app.route('/analyze/<video_id>', methods=['POST'])
 def analyze_video(video_id):
-    if video_id not in videos:
+    video = _ensure_video(video_id)
+    if not video:
         return jsonify({"error": "Video nao encontrado"}), 404
 
     data = request.get_json() or {}
@@ -222,6 +319,9 @@ def analyze_video(video_id):
     min_silence = data.get("min_silence", 2)
     scene_threshold = data.get("scene_threshold", 30)
     use_whisper = data.get("use_whisper", False)
+    min_clip_duration = float(data.get("min_clip_duration", 40))
+    max_clip_duration = float(data.get("max_clip_duration", 120))
+    min_score = int(data.get("min_score", 50))
 
     analysis_id = str(uuid.uuid4())[:8]
     analysis_progress[analysis_id] = {
@@ -233,19 +333,20 @@ def analyze_video(video_id):
         'error': None
     }
 
-    video = videos[video_id]
     video_path = video["path"]
     total_duration = video["info"].get("duration", 0)
 
     thread = threading.Thread(
         target=_do_analyze,
         args=(analysis_id, video_id, video_path, total_duration,
-              silence_threshold, min_silence, scene_threshold, use_whisper),
+              silence_threshold, min_silence, scene_threshold, use_whisper,
+              min_clip_duration, max_clip_duration, min_score),
         daemon=True
     )
     thread.start()
 
     return jsonify({"analysis_id": analysis_id})
+
 
 
 @app.route('/analyze/progress/<analysis_id>')
@@ -267,72 +368,332 @@ def analyze_result(analysis_id):
     return jsonify(prog.get('result', {}))
 
 
+@app.route('/reanalyze_hooks/<video_id>', methods=['POST'])
+def reanalyze_hooks(video_id):
+    data = request.get_json() or {}
+    min_duration = float(data.get("min_clip_duration", 40))
+    max_duration = float(data.get("max_clip_duration", 120))
+    min_score = int(data.get("min_score", 50))
+
+    trans_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{video_id}_transcription.json")
+    if not os.path.exists(trans_path):
+        return jsonify({"error": "Transcrição não encontrada para este vídeo. Ative 'Usar Whisper (IA)' e analise o vídeo primeiro."}), 404
+
+    try:
+        with open(trans_path, 'r', encoding='utf-8') as f:
+            whisper_segments = json.load(f)
+    except Exception as e:
+        return jsonify({"error": f"Erro ao ler transcrição: {e}"}), 500
+
+    video = videos.get(video_id, {})
+    total_duration = video.get("info", {}).get("duration", 0)
+    if not total_duration and whisper_segments:
+        total_duration = whisper_segments[-1]["end"]
+
+    cuts = generate_smart_cuts(whisper_segments, total_duration, min_duration=min_duration, max_duration=max_duration, min_score=min_score)
+
+    if video_id in videos:
+        videos[video_id]["cuts"] = cuts
+
+    cuts_json_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{video_id}_cuts.json")
+    try:
+        with open(cuts_json_path, 'w', encoding='utf-8') as f:
+            json.dump(cuts, f)
+    except Exception as e:
+        logger.warning(f"Failed to persist cuts: {e}")
+
+    return jsonify({"success": True, "cuts": cuts, "count": len(cuts)})
+
+
+@app.route('/api/config', methods=['GET'])
+def api_get_config():
+    from core.gemini_analyzer import get_config
+    cfg = get_config()
+    raw_key = cfg.get("gemini_api_key", "")
+    masked = ""
+    if raw_key:
+        masked = raw_key[:6] + "..." + raw_key[-4:] if len(raw_key) > 10 else "******"
+    return jsonify({
+        "use_gemini": cfg.get("use_gemini", True),
+        "gemini_model": cfg.get("gemini_model", "gemini-3.6-flash"),
+        "has_key": bool(raw_key),
+        "masked_key": masked,
+        "gemini_api_key": raw_key
+    })
+
+
+@app.route('/api/config', methods=['POST'])
+def api_save_config():
+    from core.gemini_analyzer import get_config, save_config
+    data = request.get_json() or {}
+    cfg = get_config()
+    if "use_gemini" in data:
+        cfg["use_gemini"] = bool(data["use_gemini"])
+    if "gemini_model" in data:
+        cfg["gemini_model"] = str(data["gemini_model"])
+    if "gemini_api_key" in data and data["gemini_api_key"].strip():
+        cfg["gemini_api_key"] = str(data["gemini_api_key"]).strip()
+    save_config(cfg)
+    return jsonify({"success": True, "message": "Configurações salvas com sucesso!"})
+
+
+@app.route('/api/config/test_gemini', methods=['POST'])
+def api_test_gemini():
+    from core.gemini_analyzer import test_gemini_key, get_config
+    data = request.get_json() or {}
+    api_key = data.get("gemini_api_key", "").strip()
+    if not api_key:
+        cfg = get_config()
+        api_key = cfg.get("gemini_api_key", "")
+    model = data.get("gemini_model", "gemini-3.6-flash")
+    success, msg = test_gemini_key(api_key, model=model)
+    return jsonify({"success": success, "message": msg})
+
+
+def generate_smart_cuts(whisper_segments, total_duration, min_duration=40.0, max_duration=120.0, min_score=50):
+    """
+    Tries Gemini context analysis first if key is configured,
+    otherwise uses intelligent local rule-based topic segmenter.
+    """
+    from core.gemini_analyzer import get_config, analyze_with_gemini
+    from core.hook_analyzer import find_smart_cuts
+
+    cfg = get_config()
+    use_gemini = cfg.get("use_gemini", True)
+    gemini_key = cfg.get("gemini_api_key", "").strip()
+    gemini_model = cfg.get("gemini_model", "gemini-2.0-flash")
+
+    if use_gemini and gemini_key:
+        try:
+            logger.info(f"Analyzing transcript with Gemini AI ({gemini_model})...")
+            cuts = analyze_with_gemini(
+                whisper_segments,
+                total_duration,
+                min_duration=min_duration,
+                max_duration=max_duration,
+                api_key=gemini_key,
+                model=gemini_model
+            )
+            if cuts:
+                logger.info(f"Gemini successfully returned {len(cuts)} intelligent cuts")
+                return cuts
+        except Exception as e:
+            logger.warning(f"Gemini analysis failed ({e}), falling back to local hook analyzer")
+
+    logger.info("Using local smart hook & topic analyzer...")
+    return find_smart_cuts(
+        whisper_segments,
+        total_duration,
+        min_duration=min_duration,
+        max_duration=max_duration,
+        min_score=min_score
+    )
+
+
+def _format_elapsed(seconds):
+    """Format seconds into human-readable duration string."""
+    seconds = int(seconds)
+    if seconds < 60:
+        return f"{seconds}s"
+    elif seconds < 3600:
+        m = seconds // 60
+        s = seconds % 60
+        return f"{m}m {s:02d}s"
+    else:
+        h = seconds // 3600
+        m = (seconds % 3600) // 60
+        s = seconds % 60
+        return f"{h}h {m:02d}m {s:02d}s"
+
+
 def _do_analyze(analysis_id, video_id, video_path, total_duration,
-                silence_threshold, min_silence, scene_threshold, use_whisper=False):
+                silence_threshold, min_silence, scene_threshold, use_whisper=False,
+                min_clip_duration=40.0, max_clip_duration=120.0, min_score=50):
     try:
         prog = analysis_progress[analysis_id]
+        analysis_start = time.time()
+        trans_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{video_id}_transcription.json")
+        whisper_segments = []
+
+        # FAST PATH: If Whisper is enabled and transcription is ALREADY cached, skip all heavy processing!
+        if use_whisper and os.path.exists(trans_path) and os.path.getsize(trans_path) > 100:
+            prog.update({'percent': 20, 'step': 'Reaproveitando transcrição em cache... (0.05s)'})
+            try:
+                with open(trans_path, 'r', encoding='utf-8') as f:
+                    whisper_segments = json.load(f)
+                logger.info(f"Loaded {len(whisper_segments)} cached segments instantly")
+            except Exception as e:
+                logger.warning(f"Failed to read cached transcription: {e}")
+                whisper_segments = []
+
+            if whisper_segments:
+                prog.update({'percent': 50, 'step': f'Analisando ganchos e temas com IA ({len(whisper_segments)} falas)...'})
+                cuts = generate_smart_cuts(
+                    whisper_segments,
+                    total_duration,
+                    min_duration=min_clip_duration,
+                    max_duration=max_clip_duration,
+                    min_score=min_score
+                )
+                videos[video_id]["cuts"] = cuts
+                try:
+                    cuts_json_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{video_id}_cuts.json")
+                    with open(cuts_json_path, 'w', encoding='utf-8') as f:
+                        json.dump(cuts, f)
+                except Exception as e:
+                    logger.warning(f"Failed to auto-save cuts JSON: {e}")
+
+                total_elapsed = _format_elapsed(time.time() - analysis_start)
+                result = {
+                    "total_duration": total_duration,
+                    "audio_segments": [],
+                    "scene_timestamps": [],
+                    "silent_regions": [],
+                    "whisper_segments": whisper_segments[:50],
+                    "cuts": cuts
+                }
+                prog.update({
+                    'status': 'done',
+                    'percent': 100,
+                    'step': f'{len(cuts)} cortes inteligentes identificados em {total_elapsed}! (Cache Whisper)',
+                    'done': True,
+                    'result': result
+                })
+                logger.info(f"Fast-path analysis completed in {total_elapsed} ({len(cuts)} cuts)")
+                return
+
+        # SLOW PATH: If no cache or not using whisper
+        step_start = time.time()
+        prog.update({'status': 'running', 'percent': 10, 'step': 'Extraindo áudio do vídeo...'})
         temp_audio = None
-
-        prog.update({'status': 'running', 'percent': 5, 'step': 'Extraindo audio...'})
-
         if FFMPEG_PATH:
             temp_audio = os.path.join(tempfile.gettempdir(), f"temp_audio_{video_id}.wav")
             extract_audio(video_path, temp_audio)
             file_size = os.path.getsize(temp_audio) if os.path.exists(temp_audio) else 0
-            logger.info(f"Audio extracted: {file_size} bytes")
+            elapsed = _format_elapsed(time.time() - step_start)
+            logger.info(f"Audio extracted: {file_size} bytes in {elapsed}")
+            prog.update({'percent': 20, 'step': f'Áudio extraído em {elapsed}'})
         else:
-            prog.update({'percent': 10, 'step': 'Sem FFmpeg - analisando movimento visual...'})
-
-        prog.update({'percent': 20, 'step': 'Analisando silencio...'})
-        if temp_audio and os.path.exists(temp_audio):
-            silent_regions = analyze_silence(temp_audio, silence_threshold, min_silence)
-        else:
-            silent_regions = analyze_silence_opencv(video_path, silence_threshold, min_silence)
-
-        prog.update({'percent': 40, 'step': 'Processando segmentos de audio...'})
-        time.sleep(0.1)
+            prog.update({'percent': 15, 'step': 'Sem FFmpeg - analisando movimento visual...'})
 
         audio_segments = []
-        last_end = 0
-        for silence in sorted(silent_regions, key=lambda x: x["start"]):
-            if silence["start"] > last_end:
+        scene_timestamps = []
+        silent_regions = []
+
+        if not use_whisper:
+            step_start = time.time()
+            prog.update({'percent': 25, 'step': 'Analisando silêncio...'})
+            if temp_audio and os.path.exists(temp_audio):
+                silent_regions = analyze_silence(temp_audio, silence_threshold, min_silence)
+            else:
+                silent_regions = analyze_silence_opencv(video_path, silence_threshold, min_silence)
+
+            elapsed = _format_elapsed(time.time() - step_start)
+            prog.update({'percent': 45, 'step': f'{len(silent_regions)} regiões de silêncio encontradas em {elapsed}'})
+            time.sleep(0.2)
+
+            last_end = 0
+            for silence in sorted(silent_regions, key=lambda x: x["start"]):
+                if silence["start"] > last_end:
+                    audio_segments.append({
+                        "start": last_end,
+                        "end": silence["start"],
+                        "type": "content"
+                    })
+                last_end = silence["end"]
+            if last_end < total_duration:
                 audio_segments.append({
                     "start": last_end,
-                    "end": silence["start"],
+                    "end": total_duration,
                     "type": "content"
                 })
-            last_end = silence["end"]
-        if last_end < total_duration:
-            audio_segments.append({
-                "start": last_end,
-                "end": total_duration,
-                "type": "content"
-            })
 
-        prog.update({'percent': 50, 'step': 'Detectando mudancas de cena...'})
-        scene_timestamps = detect_scenes(video_path, scene_threshold)
+            step_start = time.time()
+            prog.update({'percent': 55, 'step': 'Detectando mudanças de cena...'})
+            scene_timestamps = detect_scenes(video_path, scene_threshold)
+            elapsed = _format_elapsed(time.time() - step_start)
+            prog.update({'percent': 70, 'step': f'{len(scene_timestamps)} cenas detectadas em {elapsed}'})
 
-        whisper_boundaries = []
-        whisper_segments = []
-        if use_whisper and temp_audio and os.path.exists(temp_audio):
-            prog.update({'percent': 60, 'step': 'Transcrevendo com Whisper tiny (~2-5 min)...'})
-            whisper_segments = transcribe_with_whisper(temp_audio, model_size="tiny")
-            prog.update({'percent': 75, 'step': f'Whisper: {len(whisper_segments)} trechos. Detectando topicos...'})
-            whisper_boundaries = detect_topic_changes(whisper_segments, max_segment_duration=300)
-            prog.update({'percent': 80, 'step': f'{len(whisper_boundaries)} mudancas de topico'})
+        if use_whisper and not whisper_segments:
+            if temp_audio and os.path.exists(temp_audio):
+                prog.update({'percent': 30, 'step': 'Carregando modelo Whisper...'})
+                whisper_done = threading.Event()
+                whisper_start = [None]
+
+                def _whisper_monitor():
+                    estimated_total = max(30, total_duration / 12)
+                    while not whisper_done.is_set():
+                        if whisper_start[0] is None:
+                            whisper_done.wait(1)
+                            continue
+                        elapsed = time.time() - whisper_start[0]
+                        elapsed_str = _format_elapsed(elapsed)
+
+                        whisper_pct = min(95, (elapsed / estimated_total) * 100)
+                        overall_pct = 30 + int(whisper_pct * 0.45)
+
+                        if elapsed < estimated_total:
+                            remaining = estimated_total - elapsed
+                            remaining_str = _format_elapsed(remaining)
+                            step = f'Whisper transcrevendo... ⏱ {elapsed_str} | ~{remaining_str} restantes'
+                        else:
+                            step = f'Whisper transcrevendo... ⏱ {elapsed_str} (quase pronto...)'
+
+                        prog.update({'percent': overall_pct, 'step': step})
+                        whisper_done.wait(3)
+
+                monitor = threading.Thread(target=_whisper_monitor, daemon=True)
+                monitor.start()
+
+                whisper_start[0] = time.time()
+                whisper_segments = transcribe_with_whisper(temp_audio, model_size="tiny")
+                whisper_elapsed = time.time() - whisper_start[0]
+                whisper_done.set()
+
+                elapsed_str = _format_elapsed(whisper_elapsed)
+                prog.update({
+                    'percent': 80,
+                    'step': f'Whisper concluído em {elapsed_str}: {len(whisper_segments)} falas. Analisando ganchos...'
+                })
+
+                # Save full transcription permanently to disk
+                try:
+                    with open(trans_path, 'w', encoding='utf-8') as f:
+                        json.dump(whisper_segments, f)
+                except Exception as e:
+                    logger.warning(f"Failed to persist transcription: {e}")
+
 
         if temp_audio and os.path.exists(temp_audio):
             os.remove(temp_audio)
 
-        prog.update({'percent': 90, 'step': 'Combinando resultados...'})
+        prog.update({'percent': 85, 'step': 'Curando os melhores cortes com alta retencao...'})
         time.sleep(0.1)
 
-        if use_whisper and whisper_boundaries:
-            cuts = combine_results_with_whisper(audio_segments, scene_timestamps, whisper_boundaries, total_duration)
+        if use_whisper and whisper_segments:
+            cuts = generate_smart_cuts(
+                whisper_segments,
+                total_duration,
+                min_duration=min_clip_duration,
+                max_duration=max_clip_duration,
+                min_score=min_score
+            )
         else:
             cuts = combine_results(audio_segments, scene_timestamps, total_duration)
+            for c in cuts:
+                c["title"] = f"Corte {c['id']:02d}"
+                c["hook"] = "Corte baseado em silêncio e troca de cena"
+                c["hook_type"] = "Cena / Pausa"
+                c["score"] = 60 if c.get("has_audio") else 20
 
         videos[video_id]["cuts"] = cuts
+        # Automatically persist cuts to disk
+        try:
+            cuts_json_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{video_id}_cuts.json")
+            with open(cuts_json_path, 'w', encoding='utf-8') as f:
+                json.dump(cuts, f)
+        except Exception as e:
+            logger.warning(f"Failed to auto-save cuts JSON: {e}")
 
         result = {
             "total_duration": total_duration,
@@ -340,14 +701,14 @@ def _do_analyze(analysis_id, video_id, video_path, total_duration,
             "scene_timestamps": scene_timestamps,
             "silent_regions": silent_regions,
             "whisper_segments": whisper_segments[:50] if whisper_segments else [],
-            "whisper_boundaries": whisper_boundaries,
             "cuts": cuts
         }
 
+        total_elapsed = _format_elapsed(time.time() - analysis_start)
         prog.update({
             'status': 'done',
             'percent': 100,
-            'step': 'Concluido!',
+            'step': f'Concluido em {total_elapsed}! {len(cuts)} cortes encontrados.',
             'done': True,
             'result': result
         })
@@ -385,14 +746,11 @@ def analyze_silence(audio_path, silence_threshold_db=-40, min_silence_duration=2
             raw_data = wav.readframes(n_frames)
 
         if sample_width == 2:
-            fmt = f"<{n_frames * n_channels}h"
-            samples = np.array(struct.unpack(fmt, raw_data), dtype=np.float64)
+            samples = np.frombuffer(raw_data, dtype=np.int16).astype(np.float32)
         elif sample_width == 4:
-            fmt = f"<{n_frames * n_channels}i"
-            samples = np.array(struct.unpack(fmt, raw_data), dtype=np.float64)
+            samples = np.frombuffer(raw_data, dtype=np.int32).astype(np.float32)
         else:
-            samples = np.frombuffer(raw_data, dtype=np.uint8).astype(np.float64)
-            samples = (samples - 128) * 256
+            samples = (np.frombuffer(raw_data, dtype=np.uint8).astype(np.float32) - 128) * 256
 
         if n_channels > 1:
             samples = samples.reshape(-1, n_channels).mean(axis=1)
@@ -402,19 +760,16 @@ def analyze_silence(audio_path, silence_threshold_db=-40, min_silence_duration=2
             samples = samples / max_val
 
         chunk_size = int(frame_rate * 0.1)
-        db_levels = []
-
-        for i in range(0, len(samples), chunk_size):
-            chunk = samples[i:i + chunk_size]
-            if len(chunk) == 0:
-                continue
-            rms = np.sqrt(np.mean(chunk ** 2))
-            if rms < 1e-10:
-                db = -100
-            else:
-                db = 20 * np.log10(rms)
-            time_s = i / frame_rate
-            db_levels.append((time_s, db))
+        n_chunks = len(samples) // chunk_size
+        if n_chunks > 0:
+            reshaped = samples[:n_chunks * chunk_size].reshape(n_chunks, chunk_size)
+            rms = np.sqrt(np.mean(reshaped ** 2, axis=1))
+            rms = np.maximum(rms, 1e-10)
+            db_levels_arr = 20 * np.log10(rms)
+            time_arr = np.arange(n_chunks) * 0.1
+            db_levels = list(zip(time_arr, db_levels_arr))
+        else:
+            db_levels = []
 
         silent_regions = []
         in_silence = False
@@ -464,27 +819,26 @@ def analyze_silence_opencv(video_path, silence_threshold_db=-40, min_silence_dur
         audio_levels = []
         prev_gray = None
         sample_interval = max(1, int(fps * 10))
-        frame_idx = 0
+        frame_pos = 0
 
-        while True:
+        while frame_pos < total_frames:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_pos)
             ret, frame = cap.read()
             if not ret:
                 break
 
-            if frame_idx % sample_interval == 0:
-                small = cv2.resize(frame, (64, 48))
-                gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+            small = cv2.resize(frame, (64, 48))
+            gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
 
-                if prev_gray is not None:
-                    diff = cv2.absdiff(prev_gray, gray)
-                    motion = np.mean(diff)
-                    db = -100 + min(motion * 3, 100)
-                    time_s = frame_idx / fps
-                    audio_levels.append((time_s, db))
+            if prev_gray is not None:
+                diff = cv2.absdiff(prev_gray, gray)
+                motion = np.mean(diff)
+                db = -100 + min(motion * 3, 100)
+                time_s = frame_pos / fps
+                audio_levels.append((time_s, db))
 
-                prev_gray = gray
-
-            frame_idx += 1
+            prev_gray = gray
+            frame_pos += sample_interval
 
         cap.release()
 
@@ -514,10 +868,48 @@ def analyze_silence_opencv(video_path, silence_threshold_db=-40, min_silence_dur
         return []
 
 
+def detect_scenes_ffmpeg(video_path, threshold=30.0):
+    """Fast scene detection using FFmpeg's select filter."""
+    if not FFMPEG_PATH:
+        return None
+    try:
+        scene_val = max(0.1, min(1.0, threshold / 100.0))
+        cmd = [
+            FFMPEG_PATH, "-i", video_path,
+            "-vf", f"scale=320:-1,select='gt(scene,{scene_val})',showinfo",
+            "-vsync", "vfr",
+            "-f", "null", "-"
+        ]
+
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        scene_changes = []
+        for line in result.stderr.split("\n"):
+            if "pts_time:" in line:
+                try:
+                    pts_str = line.split("pts_time:")[1].split()[0]
+                    timestamp = float(pts_str)
+                    if not scene_changes or (timestamp - scene_changes[-1]) >= 5.0:
+                        scene_changes.append(round(timestamp, 2))
+                except (ValueError, IndexError):
+                    pass
+        logger.info(f"FFmpeg scene detection found {len(scene_changes)} scenes")
+        return scene_changes
+    except Exception as e:
+        logger.warning(f"FFmpeg scene detection failed: {e}")
+        return None
+
+
 def detect_scenes(video_path, threshold=30.0):
+    # Try FFmpeg first (much faster)
+    ffmpeg_result = detect_scenes_ffmpeg(video_path, threshold)
+    if ffmpeg_result is not None:
+        return ffmpeg_result
+
+    # Fallback to OpenCV with optimized seeking
     try:
         cap = cv2.VideoCapture(video_path)
         fps = cap.get(cv2.CAP_PROP_FPS)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
         if fps == 0:
             cap.release()
@@ -525,30 +917,29 @@ def detect_scenes(video_path, threshold=30.0):
 
         scene_changes = []
         prev_frame = None
-        frame_count = 0
         sample_interval = max(1, int(fps * 2))
+        frame_pos = 0
 
-        while True:
+        while frame_pos < total_frames:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_pos)
             ret, frame = cap.read()
             if not ret:
                 break
 
-            if frame_count % sample_interval == 0:
-                small = cv2.resize(frame, (64, 48))
-                gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+            small = cv2.resize(frame, (64, 48))
+            gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
 
-                if prev_frame is not None:
-                    diff = cv2.absdiff(prev_frame, gray)
-                    mean_diff = np.mean(diff)
+            if prev_frame is not None:
+                diff = cv2.absdiff(prev_frame, gray)
+                mean_diff = np.mean(diff)
 
-                    if mean_diff > threshold:
-                        timestamp = frame_count / fps
-                        if not scene_changes or (timestamp - scene_changes[-1]) >= 5.0:
-                            scene_changes.append(round(timestamp, 2))
+                if mean_diff > threshold:
+                    timestamp = frame_pos / fps
+                    if not scene_changes or (timestamp - scene_changes[-1]) >= 5.0:
+                        scene_changes.append(round(timestamp, 2))
 
-                prev_frame = gray
-
-            frame_count += 1
+            prev_frame = gray
+            frame_pos += sample_interval
 
         cap.release()
         return scene_changes
@@ -609,11 +1000,14 @@ def combine_results(audio_segments, scene_timestamps, total_duration):
 def transcribe_with_whisper(audio_path, model_size="tiny", progress_callback=None):
     try:
         import whisper
+        import torch
+        torch.set_num_threads(min(8, os.cpu_count() or 4))
         logger.info(f"Loading whisper model: {model_size}")
         model = whisper.load_model(model_size)
         logger.info("Transcribing audio...")
 
-        result = model.transcribe(audio_path, language="pt", verbose=False)
+        result = model.transcribe(audio_path, language="pt", fp16=False, condition_on_previous_text=False, verbose=False)
+
 
         segments = []
         for seg in result.get("segments", []):
@@ -737,14 +1131,18 @@ def cut_video(video_path, start_time, end_time, output_path):
 
     duration = end_time - start_time
     cmd = [
-        FFMPEG_PATH, "-i", video_path,
+        FFMPEG_PATH,
         "-ss", str(start_time),
+        "-i", video_path,
         "-t", str(duration),
-        "-c:v", "libx264", "-c:a", "aac",
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "22",
+        "-c:a", "aac", "-b:a", "192k",
         "-avoid_negative_ts", "make_zero",
         output_path, "-y"
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    if result.returncode != 0:
+        logger.error(f"FFmpeg cut error: {result.stderr}")
     return result.returncode == 0
 
 
@@ -777,17 +1175,131 @@ def cut_video_opencv(video_path, start_time, end_time, output_path):
         return False
 
 
-@app.route('/export/<video_id>', methods=['POST'])
-def export_cuts(video_id):
-    if video_id not in videos:
-        return jsonify({"error": "Video nao encontrado"}), 404
+def _run_export_task(video_id, cuts, video_path, export_dir):
+    prog = export_progress.get(video_id)
+    if not prog:
+        return
 
+    total = len(cuts)
+    exported_files = []
+    completed_count = 0
+
+    try:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        def _export_single(cut):
+            filename = f"corte_{cut['id']:03d}.mp4"
+            output_path = os.path.join(export_dir, filename)
+            # Reuse if already exported previously
+            if os.path.exists(output_path) and os.path.getsize(output_path) > 1000:
+                logger.info(f"Reusing existing cut {cut['id']}: {filename}")
+                return filename, cut
+            logger.info(f"Exporting cut {cut['id']}: {cut['start']}s - {cut['end']}s")
+            try:
+                success = cut_video(video_path, cut["start"], cut["end"], output_path)
+                if success and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+                    logger.info(f"Cut {cut['id']} exported: {filename}")
+                    return filename, cut
+                else:
+                    logger.error(f"Cut {cut['id']} failed: success={success}")
+            except Exception as e:
+                logger.error(f"Cut {cut['id']} error: {e}")
+            return None, cut
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            future_to_cut = {executor.submit(_export_single, cut): cut for cut in cuts}
+            for future in as_completed(future_to_cut):
+                res_filename, cut_info = future.result()
+                completed_count += 1
+                if res_filename:
+                    exported_files.append(res_filename)
+                    if res_filename not in prog["completed_files"]:
+                        prog["completed_files"].append(res_filename)
+
+                title = cut_info.get("title") or cut_info.get("hook") or f"Corte {cut_info['id']}"
+                prog["current"] = completed_count
+                prog["current_title"] = title
+                prog["current_file"] = f"corte_{cut_info['id']:03d}.mp4"
+                prog["percent"] = min(92, int((completed_count / total) * 90))
+
+        if not exported_files:
+            prog["status"] = "error"
+            prog["error"] = "Nenhum corte foi exportado. Verifique se o FFmpeg está funcionando."
+            return
+
+        # Create zip if more than 1 file
+        if len(exported_files) > 1:
+            prog["current_title"] = "Compactando arquivos em pacote ZIP..."
+            prog["percent"] = 96
+            import zipfile
+            zip_path = os.path.join(export_dir, "cortes.zip")
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_STORED) as zf:
+                for f in sorted(exported_files):
+                    zf.write(os.path.join(export_dir, f), f)
+            prog["zip_ready"] = True
+        else:
+            prog["zip_ready"] = False
+
+        prog["current"] = total
+        prog["percent"] = 100
+        prog["status"] = "completed"
+        prog["current_title"] = f"{len(exported_files)} cortes exportados com sucesso!"
+    except Exception as e:
+        logger.error(f"Export task error for {video_id}: {e}", exc_info=True)
+        prog["status"] = "error"
+        prog["error"] = str(e)
+
+
+@app.route('/export/start/<video_id>', methods=['POST'])
+def export_start(video_id):
     data = request.get_json() or {}
     selected_ids = data.get("selected_ids", [])
+    client_cuts = data.get("cuts", [])
 
-    video = videos[video_id]
-    video_path = video["path"]
-    cuts = video["cuts"]
+    video_path = None
+    cuts = []
+
+    # 1. Check in-memory videos
+    if video_id in videos:
+        video = videos[video_id]
+        video_path = video.get("path")
+        cuts = video.get("cuts", [])
+
+    # 2. Check uploads folder
+    if not video_path or not os.path.exists(video_path):
+        for ext in ['.mp4', '.mkv', '.avi', '.mov', '.webm']:
+            p = os.path.join(app.config['UPLOAD_FOLDER'], f"{video_id}{ext}")
+            if os.path.exists(p):
+                video_path = p
+                break
+
+    if not video_path or not os.path.exists(video_path):
+        return jsonify({"error": "Vídeo não encontrado no servidor"}), 404
+
+    # 3. Restore cuts from client or saved json file
+    if client_cuts:
+        cuts = client_cuts
+        cuts_json_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{video_id}_cuts.json")
+        try:
+            with open(cuts_json_path, 'w', encoding='utf-8') as f:
+                json.dump(cuts, f)
+        except Exception as e:
+            logger.warning(f"Failed to persist cuts: {e}")
+    elif not cuts:
+        cuts_json_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{video_id}_cuts.json")
+        if os.path.exists(cuts_json_path):
+            try:
+                with open(cuts_json_path, 'r', encoding='utf-8') as f:
+                    cuts = json.load(f)
+            except Exception as e:
+                logger.error(f"Failed to load cuts JSON: {e}")
+
+    videos[video_id] = {
+        "id": video_id,
+        "path": video_path,
+        "filename": os.path.basename(video_path),
+        "cuts": cuts
+    }
 
     if selected_ids:
         cuts = [c for c in cuts if c["id"] in selected_ids]
@@ -795,44 +1307,192 @@ def export_cuts(video_id):
     if not cuts:
         return jsonify({"error": "Nenhum corte selecionado"}), 400
 
-    if len(cuts) > 50:
-        return jsonify({"error": "Maximo de 50 cortes por exportacao. Selecione menos cortes."}), 400
-
     export_dir = os.path.join(app.config['EXPORT_FOLDER'], video_id)
     os.makedirs(export_dir, exist_ok=True)
 
-    exported_files = []
-    for cut in cuts:
-        filename = f"corte_{cut['id']:03d}.mp4"
-        output_path = os.path.join(export_dir, filename)
-        logger.info(f"Exporting cut {cut['id']}: {cut['start']}s - {cut['end']}s")
-        try:
-            success = cut_video(video_path, cut["start"], cut["end"], output_path)
-            if success and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-                exported_files.append(filename)
-                logger.info(f"Cut {cut['id']} exported: {filename}")
-            else:
-                logger.error(f"Cut {cut['id']} failed: success={success}")
-        except Exception as e:
-            logger.error(f"Cut {cut['id']} error: {e}")
+    # Check if already running
+    cur = export_progress.get(video_id)
+    if cur and cur.get("status") == "running":
+        return jsonify({"status": "running", "video_id": video_id, "total": cur.get("total", len(cuts))})
 
-    if not exported_files:
-        return jsonify({"error": "Nenhum corte foi exportado. Verifique se o FFmpeg esta funcionando."}), 500
+    # Check if all already exist on disk
+    all_exist = True
+    existing_files = []
+    for c in cuts:
+        fpath = os.path.join(export_dir, f"corte_{c['id']:03d}.mp4")
+        if os.path.exists(fpath) and os.path.getsize(fpath) > 1000:
+            existing_files.append(f"corte_{c['id']:03d}.mp4")
+        else:
+            all_exist = False
 
-    if len(exported_files) == 1:
-        return send_file(
-            os.path.join(export_dir, exported_files[0]),
-            as_attachment=True,
-            download_name=exported_files[0]
-        )
-
-    import zipfile
     zip_path = os.path.join(export_dir, "cortes.zip")
-    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
-        for f in exported_files:
-            zf.write(os.path.join(export_dir, f), f)
 
-    return send_file(zip_path, as_attachment=True, download_name="cortes.zip")
+    # If all requested cuts already exist as MP4s, generate a FRESH zip specifically with ONLY these requested cuts!
+    if all_exist:
+        if len(cuts) > 1:
+            import zipfile
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_STORED) as zf:
+                for f in sorted(existing_files):
+                    zf.write(os.path.join(export_dir, f), f)
+
+        export_progress[video_id] = {
+            "status": "completed",
+            "current": len(cuts),
+            "total": len(cuts),
+            "percent": 100,
+            "current_title": f"{len(cuts)} corte(s) selecionado(s) pronto(s) para download!",
+            "current_file": "",
+            "completed_files": sorted(existing_files),
+            "zip_ready": len(cuts) > 1,
+            "error": None
+        }
+        return jsonify({"status": "completed", "video_id": video_id, "total": len(cuts), "already_done": True})
+
+    # Remove any stale zip from previous exports so it's not served while rendering
+    if os.path.exists(zip_path):
+        try:
+            os.remove(zip_path)
+        except Exception:
+            pass
+
+    # Start fresh export task in background for missing cuts
+    export_progress[video_id] = {
+        "status": "running",
+        "current": len(existing_files),
+        "total": len(cuts),
+        "percent": int((len(existing_files) / len(cuts)) * 90) if len(cuts) else 0,
+        "current_title": f"Iniciando exportação de {len(cuts)} corte(s) selecionado(s)...",
+        "current_file": "",
+        "completed_files": sorted(existing_files),
+        "zip_ready": False,
+        "error": None
+    }
+
+    t = threading.Thread(
+        target=_run_export_task,
+        args=(video_id, cuts, video_path, export_dir),
+        daemon=True
+    )
+    t.start()
+    export_threads[video_id] = t
+
+    return jsonify({"status": "started", "video_id": video_id, "total": len(cuts)})
+
+
+@app.route('/export/status/<video_id>', methods=['GET'])
+def export_status(video_id):
+    prog = export_progress.get(video_id)
+    if prog:
+        return jsonify(prog)
+
+    # Check filesystem if no memory state
+    export_dir = os.path.join(app.config['EXPORT_FOLDER'], video_id)
+    if os.path.exists(export_dir):
+        zip_path = os.path.join(export_dir, "cortes.zip")
+        if os.path.exists(zip_path) and os.path.getsize(zip_path) > 1000:
+            import zipfile
+            try:
+                with zipfile.ZipFile(zip_path, 'r') as zf:
+                    zip_files = sorted(zf.namelist())
+                    return jsonify({
+                        "status": "completed",
+                        "current": len(zip_files),
+                        "total": len(zip_files),
+                        "percent": 100,
+                        "completed_files": zip_files,
+                        "zip_ready": True,
+                        "current_title": f"{len(zip_files)} cortes prontos para download",
+                        "current_file": zip_files[-1] if zip_files else "",
+                        "error": None
+                    })
+            except Exception:
+                pass
+
+        files = sorted([f for f in os.listdir(export_dir) if f.startswith('corte_') and f.endswith('.mp4') and os.path.getsize(os.path.join(export_dir, f)) > 1000])
+        if files:
+            return jsonify({
+                "status": "completed" if len(files) == 1 else "idle",
+                "current": len(files),
+                "total": len(files),
+                "percent": 100 if len(files) == 1 else 0,
+                "completed_files": files,
+                "zip_ready": False,
+                "current_title": f"{len(files)} cortes disponíveis",
+                "current_file": files[-1] if files else "",
+                "error": None
+            })
+
+    return jsonify({
+        "status": "idle",
+        "current": 0,
+        "total": 0,
+        "percent": 0,
+        "completed_files": [],
+        "zip_ready": False,
+        "current_title": "",
+        "current_file": "",
+        "error": None
+    })
+
+
+@app.route('/export/download/<video_id>', methods=['GET'])
+def export_download(video_id):
+    export_dir = os.path.join(app.config['EXPORT_FOLDER'], video_id)
+    if not os.path.exists(export_dir):
+        return jsonify({"error": "Exportação não encontrada"}), 404
+
+    prog = export_progress.get(video_id)
+    if prog and prog.get("total") == 1 and prog.get("completed_files"):
+        single_name = prog["completed_files"][0]
+        single_path = os.path.join(export_dir, single_name)
+        if os.path.exists(single_path):
+            return send_file(single_path, as_attachment=True, download_name=single_name)
+
+    zip_path = os.path.join(export_dir, "cortes.zip")
+    if os.path.exists(zip_path) and os.path.getsize(zip_path) > 1000:
+        return send_file(zip_path, as_attachment=True, download_name="cortes.zip")
+
+    files = sorted([f for f in os.listdir(export_dir) if f.startswith('corte_') and f.endswith('.mp4')])
+    if len(files) == 1:
+        return send_file(os.path.join(export_dir, files[0]), as_attachment=True, download_name=files[0])
+    elif len(files) > 1:
+        import zipfile
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for f in files:
+                zf.write(os.path.join(export_dir, f), f)
+        return send_file(zip_path, as_attachment=True, download_name="cortes.zip")
+
+    return jsonify({"error": "Nenhum arquivo para download"}), 404
+
+
+
+@app.route('/export/file/<video_id>/<filename>', methods=['GET'])
+def export_file(video_id, filename):
+    export_dir = os.path.join(app.config['EXPORT_FOLDER'], video_id)
+    safe_name = secure_filename(filename)
+    path = os.path.join(export_dir, safe_name)
+    if os.path.exists(path):
+        return send_file(path, as_attachment=True, download_name=safe_name)
+    return jsonify({"error": "Arquivo não encontrado"}), 404
+
+
+@app.route('/export/<video_id>', methods=['POST'])
+def export_cuts(video_id):
+    # Synchronous backward compatible route
+    start_resp = export_start(video_id)
+    if start_resp.status_code != 200:
+        return start_resp
+
+    t = export_threads.get(video_id)
+    if t and t.is_alive():
+        t.join()
+
+    prog = export_progress.get(video_id, {})
+    if prog.get("status") == "error":
+        return jsonify({"error": prog.get("error", "Erro na exportação")}), 500
+
+    return export_download(video_id)
+
 
 
 # ==================== YOUTUBE ====================

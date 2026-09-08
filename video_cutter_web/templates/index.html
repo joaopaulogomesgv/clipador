@@ -1225,6 +1225,7 @@
                         <div class="info-item"><strong>Duracao:</strong> <span id="infoDur">-</span></div>
                         <div class="info-item"><strong>FPS:</strong> <span id="infoFps">-</span></div>
                         <div class="info-item"><strong>Codec:</strong> <span id="infoCodec">-</span></div>
+                        <button type="button" class="btn btn-outline" style="font-size:11px; padding:3px 10px; margin-left:auto; border-radius:6px; cursor:pointer;" onclick="resetCurrentVideo()" title="Trocar ou carregar outro vídeo">🔄 Trocar Vídeo</button>
                     </div>
                 </div>
 
@@ -1282,9 +1283,33 @@
                         Cortes Detectados
                     </div>
 
-                    <div class="cuts-actions">
-                        <button class="btn btn-secondary" onclick="selectAllCuts(true)">Selecionar Todos</button>
-                        <button class="btn btn-outline" onclick="selectAllCuts(false)">Desmarcar Todos</button>
+                    <div class="cuts-actions" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:16px;">
+                        <div style="display:flex; gap:8px;">
+                            <button class="btn btn-secondary" onclick="selectAllCuts(true)">Selecionar Todos</button>
+                            <button class="btn btn-outline" onclick="selectAllCuts(false)">Desmarcar Todos</button>
+                        </div>
+                        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                            <span style="font-size:12px; color:var(--text-muted);">Visualização:</span>
+                            <button class="btn btn-outline" id="filterBestHooksBtn" style="padding:6px 12px; font-size:12px;" onclick="toggleBestHooksFilter()">🔥 Apenas Melhores Hooks</button>
+                            <button class="btn btn-outline" id="sortScoreBtn" style="padding:6px 12px; font-size:12px;" onclick="toggleSortOrder('score')">Ordenar por Score</button>
+                            <button class="btn btn-outline" id="sortTimeBtn" style="padding:6px 12px; font-size:12px;" onclick="toggleSortOrder('time')">Cronológico</button>
+                            <button class="btn btn-primary" id="reanalyzeBtn" style="padding:6px 14px; font-size:12px; background:linear-gradient(135deg, #ff6b00, #ff8800); border:none;" onclick="reanalyzeHooks()">⚡ Recalcular Ganchos</button>
+                        </div>
+                    </div>
+
+                    <!-- EXPORT STATUS ALERT BANNER -->
+                    <div id="exportAlertBanner" style="display:none; margin-bottom:16px; padding:14px 18px; border-radius:12px; background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.3); align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+                        <div style="display:flex; align-items:center; gap:12px;">
+                            <span style="font-size:22px;">📦</span>
+                            <div>
+                                <div id="exportBannerTitle" style="font-weight:700; font-size:13px; color:#10b981;">Cortes Exportados Disponíveis</div>
+                                <div id="exportBannerSub" style="font-size:12px; color:var(--text-secondary);">Os cortes já foram renderizados pelo FFmpeg e estão prontos.</div>
+                            </div>
+                        </div>
+                        <div style="display:flex; gap:8px;">
+                            <button class="btn btn-outline" style="padding:6px 14px; font-size:12px;" onclick="openExportModal()">Ver Detalhes</button>
+                            <button class="btn btn-primary" style="padding:6px 16px; font-size:12px; background:linear-gradient(135deg, #10b981, #059669); border:none;" onclick="downloadExportedFile()">📥 Baixar Pacote ZIP</button>
+                        </div>
                     </div>
 
                     <div id="cutsListFull">
@@ -1325,12 +1350,34 @@
 
                     <div style="margin:16px 0; padding:12px; background:var(--bg-card); border:1px solid var(--border); border-radius:10px;">
                         <label style="display:flex; align-items:center; gap:10px; cursor:pointer;">
-                            <input type="checkbox" id="useWhisper" style="width:18px; height:18px; accent-color:var(--accent);">
+                            <input type="checkbox" id="useWhisper" style="width:18px; height:18px; accent-color:var(--accent);" onchange="document.getElementById('aiHookSettings').style.display = this.checked ? 'block' : 'none';">
                             <div>
-                                <div style="font-size:13px; font-weight:600;">Usar Whisper (IA)</div>
-                                <div style="font-size:11px; color:var(--text-muted);">Transcreve o audio e corta por mudanca de topico. ~2-5 min para 2h de video.</div>
+                                <div style="font-size:13px; font-weight:600; display:flex; align-items:center; gap:6px;">
+                                    <span>Usar Whisper (IA)</span>
+                                    <span class="cut-badge" style="background:rgba(255,107,0,0.15); color:#ff7a00; border:1px solid rgba(255,107,0,0.3); font-size:9px;">Hooks & Assuntos</span>
+                                </div>
+                                <div style="font-size:11px; color:var(--text-muted);">Detecta ganchos virais e assuntos completos em lives e podcasts.</div>
+                                <div id="sidebarGeminiBadge" style="margin-top:6px; font-size:11px; display:flex; align-items:center; gap:6px;">
+                                    <span class="cut-badge" id="sidebarAiTag" style="background:rgba(59,130,246,0.12); color:#3b82f6; border:1px solid rgba(59,130,246,0.3); font-size:9px;">✨ Gemini AI</span>
+                                    <span style="color:var(--text-muted); font-size:10px;" id="sidebarAiText">Carregando modo...</span>
+                                </div>
                             </div>
                         </label>
+
+                        <div id="aiHookSettings" style="display:none; margin-top:12px; padding-top:12px; border-top:1px solid var(--border);">
+                            <div class="settings-row" style="margin-bottom:10px;">
+                                <div class="settings-label" style="font-size:11px;"><span>Duração Mínima</span><span><span id="minClipVal">40</span> s</span></div>
+                                <input type="range" id="minClipDuration" min="20" max="120" value="40" oninput="document.getElementById('minClipVal').textContent = this.value">
+                            </div>
+                            <div class="settings-row" style="margin-bottom:10px;">
+                                <div class="settings-label" style="font-size:11px;"><span>Duração Máxima</span><span><span id="maxClipVal">120</span> s</span></div>
+                                <input type="range" id="maxClipDuration" min="40" max="240" value="120" oninput="document.getElementById('maxClipVal').textContent = this.value">
+                            </div>
+                            <div class="settings-row">
+                                <div class="settings-label" style="font-size:11px;"><span>Score Mínimo do Gancho</span><span>🔥 <span id="hookScoreVal">50</span>/100</span></div>
+                                <input type="range" id="minHookScore" min="25" max="90" value="50" oninput="document.getElementById('hookScoreVal').textContent = this.value">
+                            </div>
+                        </div>
                     </div>
 
                     <button class="btn btn-primary analyze-btn" id="analyzeBtn" onclick="analyzeVideo()" disabled>
@@ -1457,6 +1504,58 @@
                     </div>
                 </div>
 
+                <!-- GEMINI AI SETTINGS -->
+                <div style="background:var(--bg-card); border:1px solid var(--border); border-radius:16px; overflow:hidden; margin-bottom:20px;">
+                    <div style="padding:20px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
+                        <div>
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <h3 style="font-size:16px; font-weight:700;">Google Gemini AI</h3>
+                                <span class="cut-badge" style="background:rgba(59,130,246,0.15); color:#3b82f6; border:1px solid rgba(59,130,246,0.3); font-size:10px;">Cortes Profissionais</span>
+                            </div>
+                            <p style="font-size:13px; color:var(--text-muted); margin-top:2px;">Análise profunda de contexto, histórias completas e ganchos virais</p>
+                        </div>
+                        <span id="geminiStatusBadge" class="cut-badge" style="background:rgba(255,255,255,0.06); color:var(--text-muted); border:1px solid var(--border);">Carregando...</span>
+                    </div>
+
+                    <div style="padding:20px; border-bottom:1px solid var(--border);">
+                        <label style="display:flex; align-items:center; gap:12px; cursor:pointer;">
+                            <input type="checkbox" id="cfgUseGemini" style="width:18px; height:18px; accent-color:var(--accent);">
+                            <div>
+                                <div style="font-size:14px; font-weight:600;">Ativar análise de contexto com Gemini AI</div>
+                                <div style="font-size:12px; color:var(--text-muted);">Quando ativo, o Gemini lê a transcrição e seleciona os momentos de maior retenção com início e fim cirúrgicos.</div>
+                            </div>
+                        </label>
+                    </div>
+
+                    <div style="padding:20px; border-bottom:1px solid var(--border);">
+                        <label style="font-size:13px; font-weight:600; display:block; margin-bottom:6px;">Chave de API do Gemini (Google AI Studio)</label>
+                        <div style="display:flex; gap:10px; align-items:center;">
+                            <div style="position:relative; flex:1;">
+                                <input type="password" id="cfgGeminiKey" placeholder="Cole sua chave AIzaSy..." style="width:100%; padding:10px 40px 10px 12px; background:var(--bg-input); border:1px solid var(--border); border-radius:8px; color:var(--text-primary); font-family:monospace; font-size:13px;">
+                                <button type="button" onclick="toggleKeyVisibility()" title="Mostrar/ocultar chave" style="position:absolute; right:10px; top:50%; transform:translateY(-50%); background:none; border:none; color:var(--text-muted); cursor:pointer; font-size:14px;">👁️</button>
+                            </div>
+                            <button class="btn btn-outline" style="padding:10px 16px; font-size:13px;" onclick="testGeminiConnection()">Testar Conexão</button>
+                        </div>
+                        <div style="display:flex; justify-content:space-between; margin-top:8px; flex-wrap:wrap; gap:6px;">
+                            <span id="cfgKeyHint" style="font-size:11px; color:var(--text-muted);">Nenhuma chave salva.</span>
+                            <a href="https://aistudio.google.com/app/apikey" target="_blank" style="font-size:11px; color:var(--accent); text-decoration:none;">Criar chave gratuita no Google AI Studio ↗</a>
+                        </div>
+                    </div>
+
+                    <div style="padding:20px; border-bottom:1px solid var(--border);">
+                        <label style="font-size:13px; font-weight:600; display:block; margin-bottom:6px;">Modelo do Gemini</label>
+                        <select id="cfgGeminiModel" style="width:100%; padding:10px 12px; background:var(--bg-input); border:1px solid var(--border); border-radius:8px; color:var(--text-primary); font-size:13px;">
+                            <option value="gemini-flash-latest">gemini-flash-latest (Recomendado - Mais Recente, Rápido e Gratuito)</option>
+                            <option value="gemini-3.6-flash">gemini-3.6-flash (Versão Estável 3.6)</option>
+                            <option value="gemini-pro-latest">gemini-pro-latest (Máxima Qualidade)</option>
+                        </select>
+                    </div>
+
+                    <div style="padding:20px; display:flex; justify-content:flex-end; align-items:center;">
+                        <button class="btn btn-primary" onclick="saveGeminiConfig()" style="padding:10px 24px; font-size:13px;">Salvar Configurações</button>
+                    </div>
+                </div>
+
                 <div style="background:var(--bg-card); border:1px solid var(--border); border-radius:16px; overflow:hidden;">
                     <div style="padding:20px; border-bottom:1px solid var(--border);">
                         <h3 style="font-size:16px; font-weight:700; margin-bottom:4px;">Sobre</h3>
@@ -1479,6 +1578,76 @@
 
     <input type="file" id="fileInput" accept="video/*" style="display:none" onchange="handleFileSelect(event)">
     <div class="toast" id="toast"></div>
+
+    <!-- EXPORT MODAL -->
+    <div id="exportModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.8); backdrop-filter:blur(8px); z-index:99999; align-items:center; justify-content:center; padding:16px;">
+        <div style="background:var(--bg-card); border:1px solid var(--border); border-radius:18px; width:100%; max-width:580px; padding:26px; box-shadow:0 25px 60px -15px rgba(0,0,0,0.9); position:relative; max-height:90vh; display:flex; flex-direction:column;">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:16px;">
+                <div style="display:flex; align-items:center; gap:12px;">
+                    <div id="exportIconBox" style="width:44px; height:44px; border-radius:12px; background:rgba(16,185,129,0.15); border:1px solid rgba(16,185,129,0.3); display:flex; align-items:center; justify-content:center; font-size:22px;">
+                        🎬
+                    </div>
+                    <div>
+                        <h3 id="exportModalTitle" style="font-size:18px; font-weight:700; color:var(--text-primary); margin:0;">Exportando Cortes</h3>
+                        <p id="exportModalSubtitle" style="font-size:12px; color:var(--text-muted); margin-top:2px; margin-bottom:0;">Renderizando clips com áudio original via FFmpeg...</p>
+                    </div>
+                </div>
+                <button onclick="closeExportModal()" style="background:var(--bg-card-hover); border:1px solid var(--border); color:var(--text-muted); width:32px; height:32px; border-radius:8px; display:flex; align-items:center; justify-content:center; cursor:pointer; font-size:16px;" title="Minimizar">✕</button>
+            </div>
+
+            <!-- Main Progress Stats -->
+            <div style="background:var(--bg-input); border:1px solid var(--border); border-radius:12px; padding:14px; margin-bottom:14px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                    <span id="exportCurrentCount" style="font-weight:700; font-size:14px; color:var(--accent);">Corte 0 de 0</span>
+                    <span id="exportPercent" style="font-weight:800; font-size:16px; color:var(--text-primary);">0%</span>
+                </div>
+                <div style="height:10px; background:rgba(255,255,255,0.06); border-radius:6px; overflow:hidden; border:1px solid rgba(255,255,255,0.08);">
+                    <div id="exportProgressFill" style="height:100%; background:linear-gradient(90deg, #10b981, #059669); border-radius:6px; width:0%; transition:width 0.3s cubic-bezier(0.4, 0, 0.2, 1);"></div>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-top:8px; font-size:11px; color:var(--text-muted);">
+                    <span id="exportCutFilename">Aguardando início...</span>
+                    <span id="exportStatusBadge" class="cut-badge" style="background:rgba(16,185,129,0.15); color:#10b981; font-size:10px;">Ativo</span>
+                </div>
+            </div>
+
+            <!-- Current Cut Focus -->
+            <div id="exportCurrentCutCard" style="background:var(--bg-card-hover); border:1px solid var(--border); border-radius:10px; padding:12px 14px; margin-bottom:14px;">
+                <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.5px; color:var(--text-muted); margin-bottom:4px; font-weight:600;">Corte Atual em Renderização:</div>
+                <div id="exportCutTitle" style="font-weight:600; font-size:13px; color:var(--text-primary); line-height:1.4;">Carregando dados do corte...</div>
+            </div>
+
+            <!-- List of Completed Cuts -->
+            <div style="flex:1; overflow:hidden; display:flex; flex-direction:column; margin-bottom:16px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; font-size:11px; font-weight:600; color:var(--text-muted); text-transform:uppercase;">
+                    <span>Arquivos Gerados</span>
+                    <span id="exportCompletedCounter" style="color:var(--text-secondary);">0 prontos</span>
+                </div>
+                <div id="exportCompletedList" style="flex:1; max-height:150px; overflow-y:auto; background:var(--bg-input); border:1px solid var(--border); border-radius:10px; padding:8px 10px; display:flex; flex-direction:column; gap:6px;">
+                    <div style="font-size:12px; color:var(--text-muted); text-align:center; padding:14px 0;">Nenhum arquivo finalizado ainda</div>
+                </div>
+            </div>
+
+            <!-- Action buttons -->
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding-top:12px; border-top:1px solid var(--border);">
+                <button class="btn btn-outline" onclick="closeExportModal()" style="font-size:12px; padding:8px 14px;">
+                    Minimizar (2º Plano)
+                </button>
+                <div style="display:flex; gap:8px;">
+                    <button class="btn btn-primary" id="exportDownloadBtn" style="display:none; background:linear-gradient(135deg, #10b981, #059669); border:none; padding:8px 18px; font-size:13px; font-weight:600;" onclick="downloadExportedFile()">
+                        📥 Baixar Pacote ZIP
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- FLOATING EXPORT STATUS PILL (visible when minimized & active) -->
+    <div id="exportFloatingPill" onclick="openExportModal()" style="display:none; position:fixed; bottom:24px; right:24px; background:var(--bg-card); border:1px solid var(--accent); border-radius:30px; padding:10px 18px; box-shadow:0 10px 25px rgba(0,0,0,0.5); z-index:99998; cursor:pointer; align-items:center; gap:10px; transition:transform 0.2s;">
+        <div style="width:10px; height:10px; border-radius:50%; background:#10b981; animation:pulse 1.5s infinite;"></div>
+        <span id="exportFloatingText" style="font-size:13px; font-weight:600; color:var(--text-primary);">Exportando: 0/0 (0%)</span>
+        <span style="font-size:11px; color:var(--accent); text-decoration:underline;">Ver</span>
+    </div>
+
 
     <style>
         .toggle {
@@ -1504,7 +1673,11 @@
             document.querySelectorAll('.menu-item').forEach(m => m.classList.remove('active'));
             document.getElementById('page-' + page).classList.add('active');
             if (el) el.classList.add('active');
+            if (page === 'cortes' && currentVideoId) {
+                checkExportStatus(currentVideoId, false);
+            }
         }
+
 
         // Drag & Drop
         window.addEventListener('DOMContentLoaded', () => {
@@ -1545,8 +1718,9 @@
                 if (xhr.status === 200) {
                     var data = JSON.parse(xhr.responseText);
                     currentVideoId = data.video_id;
+                    localStorage.setItem('clipador_active_video_id', currentVideoId);
                     videoInfo = data.info;
-                    onVideoLoaded(data);
+                    onVideoLoaded(data, false);
                 } else { showToast('Erro ao enviar', 'error'); }
                 if (progress) progress.style.display = 'none';
             };
@@ -1554,18 +1728,25 @@
             xhr.send(fd);
         }
 
-        function onVideoLoaded(data) {
+        function onVideoLoaded(data, isRestore) {
+            currentVideoId = data.video_id;
+            localStorage.setItem('clipador_active_video_id', currentVideoId);
+            videoInfo = data.info || {};
+
             var uz = document.getElementById('uploadZone');
             var vc = document.getElementById('videoContainer');
             var cw = document.getElementById('controlsWrapper');
             var ib = document.getElementById('videoInfoBar');
             if (uz) uz.style.display = 'none';
             if (vc) vc.classList.add('active');
-            video.src = '/video/' + data.video_id;
+            if (video.getAttribute('data-loaded-id') !== data.video_id) {
+                video.src = '/video/' + data.video_id;
+                video.setAttribute('data-loaded-id', data.video_id);
+            }
             if (cw) cw.classList.add('active');
             if (ib) ib.classList.add('active');
 
-            var i = data.info;
+            var i = data.info || {};
             setText('infoRes', (i.width||'?') + 'x' + (i.height||'?'));
             setText('infoDur', formatTime(i.duration||0));
             setText('infoFps', (i.fps||'?') + ' fps');
@@ -1578,7 +1759,9 @@
             setText('statDuration', formatTimeShort(i.duration||0));
             setText('statRes', i.width ? i.width + 'x' + i.height : '-');
 
-            showToast('Video carregado!', 'success');
+            if (!isRestore) {
+                showToast('Vídeo carregado com sucesso!', 'success');
+            }
         }
 
         function setText(id, val) { var e = document.getElementById(id); if (e) e.textContent = val; }
@@ -1619,12 +1802,16 @@
                         silence_threshold: parseInt(document.getElementById('silenceThreshold').value) || -40,
                         min_silence: parseInt(document.getElementById('minSilence').value) || 2,
                         scene_threshold: parseInt(document.getElementById('sceneThreshold').value) || 30,
-                        use_whisper: document.getElementById('useWhisper').checked
+                        use_whisper: document.getElementById('useWhisper').checked,
+                        min_clip_duration: document.getElementById('minClipDuration') ? parseInt(document.getElementById('minClipDuration').value) : 30,
+                        max_clip_duration: document.getElementById('maxClipDuration') ? parseInt(document.getElementById('maxClipDuration').value) : 90,
+                        min_score: document.getElementById('minHookScore') ? parseInt(document.getElementById('minHookScore').value) : 45
                     })
                 });
 
                 if (r.ok) {
                     var data = await r.json();
+                    localStorage.setItem('clipador_active_analysis_id', data.analysis_id);
                     pollAnalysisProgress(data.analysis_id);
                 } else {
                     var e = await r.json();
@@ -1643,11 +1830,40 @@
             var status = document.getElementById('analysisStatus');
             var text = document.getElementById('analysisText');
             var btn = document.getElementById('analyzeBtn');
+            if (btn) btn.disabled = true;
 
+            var existing = document.getElementById('analysisProgressBar');
+            if (!existing && status) {
+                var progressHtml = '<div id="analysisProgressBar" style="margin-top:10px;">' +
+                    '<div style="display:flex; justify-content:space-between; margin-bottom:4px; font-size:11px;">' +
+                    '<span id="analysisPercent">0%</span>' +
+                    '<span id="analysisStep"></span>' +
+                    '</div>' +
+                    '<div style="height:6px; background:var(--bg-input); border-radius:3px; overflow:hidden;">' +
+                    '<div id="analysisFill" style="height:100%; background:var(--accent); border-radius:3px; width:0%; transition:width 0.3s;"></div>' +
+                    '</div>' +
+                    '</div>';
+                status.className = 'yt-status active loading';
+                status.insertAdjacentHTML('beforeend', progressHtml);
+            }
+
+            var failCount = 0;
             var interval = setInterval(async function() {
                 try {
                     var r = await fetch('/analyze/progress/' + analysisId);
-                    if (!r.ok) return;
+                    if (!r.ok) {
+                        failCount++;
+                        if (failCount >= 3) {
+                            clearInterval(interval);
+                            localStorage.removeItem('clipador_active_analysis_id');
+                            if (status) status.className = 'yt-status active error';
+                            if (text) text.textContent = 'Conexão perdida com o servidor. Recarregue a página e tente novamente.';
+                            if (btn) btn.disabled = false;
+                            showToast('Análise perdida - recarregue a página', 'error');
+                        }
+                        return;
+                    }
+                    failCount = 0;
                     var p = await r.json();
 
                     var fill = document.getElementById('analysisFill');
@@ -1661,6 +1877,7 @@
 
                     if (p.status === 'done') {
                         clearInterval(interval);
+                        localStorage.removeItem('clipador_active_analysis_id');
                         // Fetch result
                         var rr = await fetch('/analyze/result/' + analysisId);
                         if (rr.ok) {
@@ -1668,7 +1885,7 @@
                             cuts = d.cuts;
                             renderCuts();
                             if (status) status.className = 'yt-status active success';
-                            if (text) text.textContent = cuts.length + ' cortes detectados!';
+                            if (text) text.textContent = p.step || cuts.length + ' cortes detectados!';
                             setDisplay('cutsBadge', 'inline');
                             setText('cutsBadge', cuts.length);
                             setText('statCuts', cuts.length);
@@ -1677,16 +1894,108 @@
                             setDisabled('exportAllBtn2', false);
                             setDisabled('exportSelectedBtn2', false);
                             showToast(cuts.length + ' cortes encontrados!', 'success');
+                            if (currentVideoId) {
+                                localStorage.setItem('clipador_active_video_id', currentVideoId);
+                            }
                         }
                         if (btn) btn.disabled = false;
                     } else if (p.status === 'error') {
                         clearInterval(interval);
+                        localStorage.removeItem('clipador_active_analysis_id');
                         if (status) status.className = 'yt-status active error';
                         if (text) text.textContent = p.error || 'Erro';
                         if (btn) btn.disabled = false;
                     }
-                } catch(err) {}
-            }, 300);
+                } catch(err) {
+                    failCount++;
+                    if (failCount >= 5) {
+                        clearInterval(interval);
+                        localStorage.removeItem('clipador_active_analysis_id');
+                        if (status) status.className = 'yt-status active error';
+                        if (text) text.textContent = 'Erro de conexao. Recarregue a pagina.';
+                        if (btn) btn.disabled = false;
+                    }
+                }
+            }, 1000);
+        }
+
+        var currentSortOrder = 'score'; // 'score' or 'time'
+        var onlyBestHooks = false;
+
+        function toggleSortOrder(order) {
+            currentSortOrder = order;
+            var scoreBtn = document.getElementById('sortScoreBtn');
+            var timeBtn = document.getElementById('sortTimeBtn');
+            if (scoreBtn && timeBtn) {
+                if (order === 'score') {
+                    scoreBtn.className = 'btn btn-secondary';
+                    timeBtn.className = 'btn btn-outline';
+                } else {
+                    scoreBtn.className = 'btn btn-outline';
+                    timeBtn.className = 'btn btn-secondary';
+                }
+            }
+            renderCuts();
+        }
+
+        function toggleBestHooksFilter() {
+            onlyBestHooks = !onlyBestHooks;
+            var btn = document.getElementById('filterBestHooksBtn');
+            if (btn) {
+                btn.className = onlyBestHooks ? 'btn btn-primary' : 'btn btn-outline';
+            }
+            if (onlyBestHooks) {
+                // When activating "Apenas Melhores Hooks", only select the visible best hooks!
+                // Unselect hidden cuts so the user does not export them unintentionally
+                cuts.forEach(function(c) {
+                    c.selected = (c.score || 0) >= 60;
+                });
+            }
+            renderCuts();
+            updateExportButtonLabels();
+        }
+
+
+        async function reanalyzeHooks() {
+            if (!currentVideoId) { showToast('Nenhum vídeo carregado', 'error'); return; }
+            var minClip = document.getElementById('minClipDuration') ? parseInt(document.getElementById('minClipDuration').value) : 30;
+            var maxClip = document.getElementById('maxClipDuration') ? parseInt(document.getElementById('maxClipDuration').value) : 90;
+            var minScore = document.getElementById('minHookScore') ? parseInt(document.getElementById('minHookScore').value) : 45;
+
+            showToast('Recalculando ganchos e assuntos...', 'info');
+            var reBtn = document.getElementById('reanalyzeBtn');
+            if (reBtn) reBtn.disabled = true;
+
+            try {
+                var r = await fetch('/reanalyze_hooks/' + currentVideoId, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        min_clip_duration: minClip,
+                        max_clip_duration: maxClip,
+                        min_score: minScore
+                    })
+                });
+                var d = await r.json();
+                if (r.ok && d.cuts) {
+                    cuts = d.cuts;
+                    renderCuts();
+                    setDisplay('cutsBadge', 'inline');
+                    setText('cutsBadge', cuts.length);
+                    setText('statCuts', cuts.length);
+                    setDisabled('exportAllBtn', false);
+                    setDisabled('exportSelectedBtn', false);
+                    setDisabled('exportAllBtn2', false);
+                    setDisabled('exportSelectedBtn2', false);
+                    showToast(d.cuts.length + ' cortes inteligentes identificados!', 'success');
+                } else {
+                    showToast(d.error || 'Erro ao recalcular ganchos', 'error');
+                }
+            } catch(e) {
+                showToast(e.message, 'error');
+            } finally {
+                if (reBtn) reBtn.disabled = false;
+            }
         }
 
         function renderCuts() {
@@ -1697,46 +2006,395 @@
             if (noCuts) noCuts.style.display = 'none';
             var existing = container.querySelectorAll('.cut-card');
             existing.forEach(function(c) { c.remove(); });
-            cuts.forEach(function(cut) {
+
+            if (currentVideoId) {
+                checkExportStatus(currentVideoId, false);
+            }
+
+            var displayCuts = cuts.slice();
+            if (onlyBestHooks) {
+                displayCuts = displayCuts.filter(function(c) { return (c.score || 0) >= 60; });
+            }
+
+            if (currentSortOrder === 'score') {
+                displayCuts.sort(function(a, b) { return (b.score || 0) - (a.score || 0); });
+            } else {
+                displayCuts.sort(function(a, b) { return (a.start || 0) - (b.start || 0); });
+            }
+
+            if (!displayCuts.length) {
+                var emptyNotice = document.createElement('div');
+                emptyNotice.className = 'cut-card';
+                emptyNotice.style.textAlign = 'center';
+                emptyNotice.style.padding = '24px';
+                emptyNotice.innerHTML = '<p style="color:var(--text-muted);">Nenhum corte atende ao filtro de Score > 60. Desmarque o filtro para ver todos.</p>';
+                container.appendChild(emptyNotice);
+                return;
+            }
+
+            displayCuts.forEach(function(cut) {
                 var card = document.createElement('div');
                 card.className = 'cut-card' + (cut.selected ? ' selected' : '');
-                card.innerHTML = '<div class="cut-card-top">' +
-                    '<input type="checkbox" class="cut-checkbox" ' + (cut.selected ? 'checked' : '') +
-                    ' onclick="event.stopPropagation(); toggleCut(' + cut.id + ', this.checked)">' +
-                    '<span class="cut-time">' + formatTime(cut.start) + ' → ' + formatTime(cut.end) + '</span></div>' +
-                    '<div class="cut-card-bottom"><span>' + cut.duration.toFixed(1) + 's</span>' +
-                    '<span class="cut-badge ' + (cut.has_audio ? 'badge-green' : 'badge-red') + '">' +
-                    (cut.has_audio ? '♫ Audio' : 'Silencio') + '</span></div>';
-                card.onclick = function(e) { if (e.target.type !== 'checkbox') { video.currentTime = cut.start; video.play(); }};
+                card.setAttribute('data-id', cut.id);
+                
+                var score = cut.score || 50;
+                var scoreColor = score >= 80 ? '#ff7a00' : (score >= 60 ? '#10b981' : '#3b82f6');
+                var scoreBg = score >= 80 ? 'rgba(255,122,0,0.12)' : (score >= 60 ? 'rgba(16,185,129,0.12)' : 'rgba(59,130,246,0.12)');
+                var scoreBorder = score >= 80 ? 'rgba(255,122,0,0.35)' : (score >= 60 ? 'rgba(16,185,129,0.3)' : 'rgba(59,130,246,0.3)');
+
+                var titleHtml = cut.title ? '<div style="font-weight:700; font-size:14px; color:var(--text-primary); margin-bottom:4px; line-height:1.3;">' + cut.title + '</div>' : '';
+                var hookHtml = cut.hook ? '<div style="font-size:12px; color:var(--accent); margin-bottom:8px; font-style:italic; line-height:1.4;">🪝 "' + cut.hook + '"</div>' : '';
+                var hookBadge = cut.hook_type ? '<span class="cut-badge" style="background:var(--bg-card-hover); border:1px solid var(--border); color:var(--text-secondary);">' + cut.hook_type + '</span>' : '';
+
+                card.innerHTML = 
+                    '<div class="cut-card-top" style="justify-content:space-between;">' +
+                        '<div style="display:flex; align-items:center; gap:10px;">' +
+                            '<input type="checkbox" class="cut-checkbox" ' + (cut.selected ? 'checked' : '') +
+                            ' onclick="event.stopPropagation(); toggleCut(' + cut.id + ', this.checked)">' +
+                            '<span class="cut-time" style="font-size:13px; font-weight:600;">' + formatTime(cut.start) + ' → ' + formatTime(cut.end) + '</span>' +
+                        '</div>' +
+                        '<div style="display:flex; gap:6px; align-items:center;">' +
+                            '<span class="cut-badge" style="background:' + scoreBg + '; color:' + scoreColor + '; border:1px solid ' + scoreBorder + '; font-weight:700;">🔥 ' + score + '/100</span>' +
+                            hookBadge +
+                        '</div>' +
+                    '</div>' +
+                    '<div style="padding-left:26px;">' +
+                        titleHtml +
+                        hookHtml +
+                        '<div class="cut-card-bottom" style="padding-left:0; margin-top:6px; display:flex; gap:10px; align-items:center;">' +
+                            '<span>⏱️ ' + cut.duration.toFixed(1) + 's</span>' +
+                            '<span class="cut-badge ' + (cut.has_audio ? 'badge-green' : 'badge-red') + '">' +
+                            (cut.has_audio ? '♫ Áudio' : 'Silêncio') + '</span>' +
+                        '</div>' +
+                    '</div>';
+
+                card.onclick = function(e) { 
+                    if (e.target.type !== 'checkbox') { 
+                        video.currentTime = cut.start; 
+                        video.play(); 
+                    }
+                };
                 container.appendChild(card);
             });
+            updateExportButtonLabels();
         }
 
-        function toggleCut(id, sel) { var c = cuts.find(function(x){return x.id===id;}); if(c) c.selected=sel; renderCuts(); }
-        function selectAllCuts(s) { cuts.forEach(function(c){c.selected=s;}); renderCuts(); }
+        function toggleCut(id, sel) {
+            var c = cuts.find(function(x){return x.id===id;});
+            if (c) c.selected = sel;
+            var card = document.querySelector('.cut-card[data-id="' + id + '"]');
+            if (card) {
+                if (sel) card.classList.add('selected');
+                else card.classList.remove('selected');
+                var cb = card.querySelector('.cut-checkbox');
+                if (cb) cb.checked = sel;
+            }
+            updateExportButtonLabels();
+        }
+
+        function selectAllCuts(s) {
+            if (onlyBestHooks) {
+                var visibleIds = new Set(cuts.filter(function(c) { return (c.score || 0) >= 60; }).map(function(c) { return c.id; }));
+                cuts.forEach(function(c) {
+                    if (visibleIds.has(c.id)) {
+                        c.selected = s;
+                    }
+                });
+            } else {
+                cuts.forEach(function(c) { c.selected = s; });
+            }
+            renderCuts();
+            updateExportButtonLabels();
+        }
+
+        function updateExportButtonLabels() {
+            var selCount = cuts.filter(function(c) { return c.selected; }).length;
+            var totalCount = cuts.length;
+
+            var selBtn1 = document.getElementById('exportSelectedBtn');
+            var selBtn2 = document.getElementById('exportSelectedBtn2');
+            var allBtn1 = document.getElementById('exportAllBtn');
+            var allBtn2 = document.getElementById('exportAllBtn2');
+
+            var selText = 'Exportar Selecionados (' + selCount + ')';
+            var allText = 'Exportar Todos (' + totalCount + ')';
+
+            if (selBtn1) {
+                selBtn1.textContent = selText;
+                selBtn1.disabled = (selCount === 0);
+            }
+            if (selBtn2) {
+                selBtn2.textContent = selText;
+                selBtn2.disabled = (selCount === 0);
+            }
+            if (allBtn1) {
+                allBtn1.textContent = allText;
+                allBtn1.disabled = (totalCount === 0);
+            }
+            if (allBtn2) {
+                allBtn2.textContent = allText;
+                allBtn2.disabled = (totalCount === 0);
+            }
+        }
+
+
+        let exportPollInterval = null;
+        let lastExportData = null;
+
+        function openExportModal() {
+            var m = document.getElementById('exportModal');
+            if (m) m.style.display = 'flex';
+            var pill = document.getElementById('exportFloatingPill');
+            if (pill) pill.style.display = 'none';
+        }
+
+        function closeExportModal() {
+            var m = document.getElementById('exportModal');
+            if (m) m.style.display = 'none';
+            if (lastExportData && lastExportData.status === 'running') {
+                var pill = document.getElementById('exportFloatingPill');
+                if (pill) pill.style.display = 'flex';
+            }
+        }
+
+        function updateExportModalUI(data) {
+            lastExportData = data;
+            if (!data) return;
+
+            var fill = document.getElementById('exportProgressFill');
+            var pct = document.getElementById('exportPercent');
+            var count = document.getElementById('exportCurrentCount');
+            var cutTitle = document.getElementById('exportCutTitle');
+            var cutFilename = document.getElementById('exportCutFilename');
+            var modalTitle = document.getElementById('exportModalTitle');
+            var modalSubtitle = document.getElementById('exportModalSubtitle');
+            var iconBox = document.getElementById('exportIconBox');
+            var downloadBtn = document.getElementById('exportDownloadBtn');
+            var statusBadge = document.getElementById('exportStatusBadge');
+            var floatingText = document.getElementById('exportFloatingText');
+            var floatingPill = document.getElementById('exportFloatingPill');
+            var completedCounter = document.getElementById('exportCompletedCounter');
+            var completedList = document.getElementById('exportCompletedList');
+
+            var percentVal = data.percent || 0;
+            if (fill) fill.style.width = percentVal + '%';
+            if (pct) pct.textContent = percentVal + '%';
+            if (count) count.textContent = 'Corte ' + (data.current || 0) + ' de ' + (data.total || 0);
+
+            if (data.current_file) {
+                if (cutFilename) cutFilename.textContent = 'Renderizando: ' + data.current_file;
+            }
+            if (data.current_title) {
+                if (cutTitle) cutTitle.textContent = data.current_title;
+            }
+
+            if (floatingText) {
+                floatingText.textContent = 'Exportando: ' + (data.current || 0) + '/' + (data.total || 0) + ' (' + percentVal + '%)';
+            }
+
+            // Completed files list
+            if (data.completed_files && data.completed_files.length > 0) {
+                if (completedCounter) completedCounter.textContent = data.completed_files.length + ' de ' + (data.total || data.completed_files.length) + ' prontos';
+                if (completedList) {
+                    completedList.innerHTML = data.completed_files.map(function(fname) {
+                        return '<div style="display:flex; justify-content:space-between; align-items:center; padding:6px 10px; border-radius:6px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.05);">' +
+                            '<span style="display:flex; align-items:center; gap:8px; font-family:monospace; font-size:12px; color:var(--text-primary);">' +
+                                '<span style="color:#10b981; font-weight:bold;">✓</span> ' + fname +
+                            '</span>' +
+                            '<a href="/export/file/' + currentVideoId + '/' + fname + '" download style="font-size:11px; color:var(--accent); text-decoration:none; padding:2px 8px; border-radius:4px; border:1px solid var(--border); background:var(--bg-card);">' +
+                                'Baixar' +
+                            '</a>' +
+                        '</div>';
+                    }).join('');
+                }
+            } else {
+                if (completedCounter) completedCounter.textContent = '0 prontos';
+                if (completedList) completedList.innerHTML = '<div style="font-size:12px; color:var(--text-muted); text-align:center; padding:14px 0;">Nenhum arquivo finalizado ainda</div>';
+            }
+
+            // Status banner on cortes page
+            var alertBanner = document.getElementById('exportAlertBanner');
+            var bannerSub = document.getElementById('exportBannerSub');
+
+            if (data.status === 'completed') {
+                if (modalTitle) modalTitle.textContent = 'Exportação Concluída!';
+                if (modalSubtitle) modalSubtitle.textContent = 'Todos os ' + (data.total || 0) + ' cortes foram renderizados com sucesso!';
+                if (iconBox) {
+                    iconBox.textContent = '🎉';
+                    iconBox.style.background = 'rgba(16,185,129,0.2)';
+                    iconBox.style.borderColor = '#10b981';
+                }
+                if (statusBadge) {
+                    statusBadge.textContent = 'Concluído';
+                    statusBadge.style.background = 'rgba(16,185,129,0.2)';
+                    statusBadge.style.color = '#10b981';
+                }
+                if (downloadBtn) {
+                    downloadBtn.style.display = 'inline-flex';
+                    downloadBtn.textContent = '📥 Baixar Pacote ZIP (' + (data.total || 0) + ' cortes)';
+                }
+                if (floatingPill) floatingPill.style.display = 'none';
+
+                if (alertBanner) {
+                    alertBanner.style.display = 'flex';
+                    if (bannerSub) bannerSub.textContent = (data.total || 0) + ' cortes renderizados com sucesso e disponíveis para download.';
+                }
+            } else if (data.status === 'running') {
+                if (modalTitle) modalTitle.textContent = 'Exportando Cortes...';
+                if (modalSubtitle) modalSubtitle.textContent = 'Renderizando clips com áudio original via FFmpeg...';
+                if (iconBox) {
+                    iconBox.textContent = '🎬';
+                    iconBox.style.background = 'rgba(255,107,0,0.15)';
+                    iconBox.style.borderColor = 'rgba(255,107,0,0.3)';
+                }
+                if (statusBadge) {
+                    statusBadge.textContent = 'Renderizando';
+                    statusBadge.style.background = 'rgba(255,107,0,0.15)';
+                    statusBadge.style.color = 'var(--accent)';
+                }
+                if (downloadBtn) downloadBtn.style.display = 'none';
+
+                var m = document.getElementById('exportModal');
+                if (m && m.style.display === 'none' && floatingPill) {
+                    floatingPill.style.display = 'flex';
+                }
+            } else if (data.status === 'error') {
+                if (modalTitle) modalTitle.textContent = 'Erro na Exportação';
+                if (modalSubtitle) modalSubtitle.textContent = data.error || 'Ocorreu um erro no processamento';
+                if (iconBox) iconBox.textContent = '⚠️';
+                if (statusBadge) {
+                    statusBadge.textContent = 'Erro';
+                    statusBadge.style.background = 'rgba(239,68,68,0.2)';
+                    statusBadge.style.color = '#ef4444';
+                }
+            }
+        }
+
+        function startExportPolling(videoId, autoDownloadOnDone) {
+            if (exportPollInterval) clearInterval(exportPollInterval);
+
+            var failCount = 0;
+            exportPollInterval = setInterval(async function() {
+                try {
+                    var r = await fetch('/export/status/' + videoId);
+                    if (!r.ok) {
+                        failCount++;
+                        if (failCount >= 4) {
+                            clearInterval(exportPollInterval);
+                            exportPollInterval = null;
+                            showToast('Conexão perdida ao verificar exportação', 'warning');
+                        }
+                        return;
+                    }
+                    failCount = 0;
+                    var p = await r.json();
+                    updateExportModalUI(p);
+
+                    if (p.status === 'completed') {
+                        clearInterval(exportPollInterval);
+                        exportPollInterval = null;
+                        showToast('Todos os ' + (p.total || 0) + ' cortes foram exportados!', 'success');
+                        if (autoDownloadOnDone) {
+                            setTimeout(downloadExportedFile, 600);
+                        }
+                    } else if (p.status === 'error') {
+                        clearInterval(exportPollInterval);
+                        exportPollInterval = null;
+                        showToast(p.error || 'Erro na exportação', 'error');
+                    }
+                } catch(e) {
+                    // ignore temporary network glitch
+                }
+            }, 800);
+        }
+
+        async function checkExportStatus(videoId, autoOpen) {
+            if (!videoId) return;
+            try {
+                var r = await fetch('/export/status/' + videoId);
+                if (r.ok) {
+                    var data = await r.json();
+                    if (data && (data.status === 'completed' || data.status === 'running')) {
+                        updateExportModalUI(data);
+                        if (autoOpen) openExportModal();
+                        if (data.status === 'running') {
+                            startExportPolling(videoId, true);
+                        }
+                    }
+                }
+            } catch(e) {}
+        }
+
+        function downloadExportedFile() {
+            if (!currentVideoId) {
+                showToast('Nenhum vídeo selecionado', 'warning');
+                return;
+            }
+            var a = document.createElement('a');
+            a.href = '/export/download/' + currentVideoId;
+            a.download = 'cortes.zip';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            showToast('Download do pacote ZIP iniciado!', 'success');
+        }
 
         async function exportCuts(sel) {
-            if (!currentVideoId) return;
-            var ids = sel ? cuts.filter(function(c){return c.selected;}).map(function(c){return c.id;}) : cuts.map(function(c){return c.id;});
-            if (!ids.length) { showToast('Nenhum corte selecionado', 'error'); return; }
-            showToast('Exportando...', 'success');
+            if (!currentVideoId) {
+                showToast('Nenhum vídeo carregado', 'warning');
+                return;
+            }
+            var targetCuts = sel ? cuts.filter(function(c){return c.selected;}) : cuts;
+            var ids = targetCuts.map(function(c){return c.id;});
+            if (!ids.length) {
+                showToast('Nenhum corte selecionado! Marque os cortes desejados na lista.', 'warning');
+                return;
+            }
+
+            openExportModal();
+            updateExportModalUI({
+                status: 'running',
+                current: 0,
+                total: ids.length,
+                percent: 0,
+                current_title: 'Preparando exportação de ' + ids.length + ' corte(s) selecionado(s)...',
+                current_file: '',
+                completed_files: []
+            });
+
             try {
-                var r = await fetch('/export/' + currentVideoId, {
-                    method:'POST', headers:{'Content-Type':'application/json'},
-                    body: JSON.stringify({selected_ids:ids})
+                var r = await fetch('/export/start/' + currentVideoId, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({selected_ids: ids, cuts: cuts})
                 });
+
                 if (r.ok) {
-                    var b = await r.blob();
-                    var a = document.createElement('a');
-                    a.href = URL.createObjectURL(b);
-                    a.download = ids.length === 1 ? 'corte_' + String(ids[0]).padStart(3,'0') + '.mp4' : 'cortes.zip';
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
-                    showToast('Exportado!', 'success');
-                } else { showToast('Erro', 'error'); }
-            } catch(e) { showToast(e.message, 'error'); }
+                    var data = await r.json();
+                    if (data.already_done || data.status === 'completed') {
+                        checkExportStatus(currentVideoId, true);
+                        showToast(ids.length + ' corte(s) pronto(s)! Baixando...', 'success');
+                        setTimeout(downloadExportedFile, 500);
+                    } else {
+                        showToast('Exportando ' + ids.length + ' corte(s) em 2º plano...', 'info');
+                        startExportPolling(currentVideoId, true);
+                    }
+                } else {
+
+                    var errMsg = 'Erro ao iniciar exportação';
+                    try {
+                        var errData = await r.json();
+                        if (errData && errData.error) errMsg = errData.error;
+                    } catch(e) {}
+                    showToast(errMsg, 'error');
+                    updateExportModalUI({status: 'error', error: errMsg});
+                }
+            } catch(e) {
+                showToast(e.message, 'error');
+                updateExportModalUI({status: 'error', error: e.message});
+            }
         }
+
 
         function togglePlay() {
             if (video.paused) {
@@ -1950,9 +2608,243 @@
             if (sc && s3) { sc.value = s3.value; document.getElementById('configSceneVal').textContent = s3.value; }
         }
 
+        // Gemini AI Configuration
+        async function loadGeminiConfig() {
+            try {
+                var r = await fetch('/api/config');
+                if (r.ok) {
+                    var data = await r.json();
+                    var chk = document.getElementById('cfgUseGemini');
+                    var mod = document.getElementById('cfgGeminiModel');
+                    var hint = document.getElementById('cfgKeyHint');
+                    var badge = document.getElementById('geminiStatusBadge');
+                    var sideTag = document.getElementById('sidebarAiTag');
+                    var sideText = document.getElementById('sidebarAiText');
+
+                    var keyInp = document.getElementById('cfgGeminiKey');
+                    if (keyInp && data.gemini_api_key) {
+                        keyInp.value = data.gemini_api_key;
+                    }
+
+                    if (chk) chk.checked = data.use_gemini !== false;
+                    if (mod && data.gemini_model) mod.value = data.gemini_model;
+
+                    if (data.has_key && data.use_gemini) {
+                        if (hint) hint.textContent = 'Chave ativa: ' + data.masked_key;
+                        if (badge) {
+                            badge.textContent = '✓ Conectado (' + (data.gemini_model || 'gemini-3.6-flash') + ')';
+                            badge.style.background = 'rgba(16,185,129,0.15)';
+                            badge.style.color = '#10b981';
+                            badge.style.border = '1px solid rgba(16,185,129,0.3)';
+                        }
+                        if (sideTag) {
+                            sideTag.textContent = '✨ Gemini AI';
+                            sideTag.style.background = 'rgba(59,130,246,0.15)';
+                            sideTag.style.color = '#3b82f6';
+                            sideTag.style.border = '1px solid rgba(59,130,246,0.3)';
+                        }
+                        if (sideText) sideText.textContent = 'Ativo (' + (data.gemini_model || 'gemini-3.6-flash') + ')';
+                    } else if (data.has_key && !data.use_gemini) {
+                        if (hint) hint.textContent = 'Chave salva (' + data.masked_key + '), mas Gemini desmarcado.';
+                        if (badge) {
+                            badge.textContent = 'Desativado Manualmente';
+                            badge.style.background = 'rgba(255,255,255,0.06)';
+                            badge.style.color = 'var(--text-muted)';
+                            badge.style.border = '1px solid var(--border)';
+                        }
+                        if (sideTag) {
+                            sideTag.textContent = '⚡ Analisador Local';
+                            sideTag.style.background = 'rgba(255,107,0,0.12)';
+                            sideTag.style.color = '#ff7a00';
+                            sideTag.style.border = '1px solid rgba(255,107,0,0.3)';
+                        }
+                        if (sideText) sideText.textContent = 'Modo Local Offline';
+                    } else {
+                        if (hint) hint.textContent = 'Nenhuma chave salva. Usando analisador local.';
+                        if (badge) {
+                            badge.textContent = 'Sem Chave (Modo Local)';
+                            badge.style.background = 'rgba(255,255,255,0.06)';
+                            badge.style.color = 'var(--text-muted)';
+                            badge.style.border = '1px solid var(--border)';
+                        }
+                        if (sideTag) {
+                            sideTag.textContent = '⚡ Analisador Local';
+                            sideTag.style.background = 'rgba(255,107,0,0.12)';
+                            sideTag.style.color = '#ff7a00';
+                            sideTag.style.border = '1px solid rgba(255,107,0,0.3)';
+                        }
+                        if (sideText) sideText.textContent = 'Modo Local Offline';
+                    }
+                }
+            } catch(e) {
+                console.error('Failed to load gemini config', e);
+            }
+        }
+
+        function toggleKeyVisibility() {
+            var inp = document.getElementById('cfgGeminiKey');
+            if (inp) {
+                inp.type = inp.type === 'password' ? 'text' : 'password';
+            }
+        }
+
+        async function testGeminiConnection() {
+            var key = document.getElementById('cfgGeminiKey').value.trim();
+            var model = document.getElementById('cfgGeminiModel').value;
+            showToast('Testando conexão com Gemini...', 'info');
+            try {
+                var r = await fetch('/api/config/test_gemini', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({gemini_api_key: key, gemini_model: model})
+                });
+                var data = await r.json();
+                if (data.success) {
+                    showToast(data.message || 'Conexão bem-sucedida!', 'success');
+                } else {
+                    showToast(data.message || 'Falha no teste', 'error');
+                }
+            } catch(e) {
+                showToast('Erro ao testar: ' + e.message, 'error');
+            }
+        }
+
+        async function saveGeminiConfig() {
+            var key = document.getElementById('cfgGeminiKey').value.trim();
+            var useGem = document.getElementById('cfgUseGemini').checked;
+            var model = document.getElementById('cfgGeminiModel').value;
+
+            var body = {
+                use_gemini: useGem,
+                gemini_model: model
+            };
+            if (key) {
+                body.gemini_api_key = key;
+            }
+
+            try {
+                var r = await fetch('/api/config', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(body)
+                });
+                if (r.ok) {
+                    showToast('Configurações do Gemini salvas com sucesso!', 'success');
+                    loadGeminiConfig();
+                } else {
+                    showToast('Erro ao salvar configurações', 'error');
+                }
+            } catch(e) {
+                showToast('Erro: ' + e.message, 'error');
+            }
+        }
+
+        function resetCurrentVideo() {
+            if (!confirm('Deseja trocar de vídeo e abrir espaço para carregar outro arquivo?')) return;
+            localStorage.removeItem('clipador_active_video_id');
+            localStorage.removeItem('clipador_active_analysis_id');
+            currentVideoId = null;
+            videoInfo = {};
+            cuts = [];
+            video.pause();
+            video.src = '';
+            video.removeAttribute('data-loaded-id');
+
+            var uz = document.getElementById('uploadZone');
+            var vc = document.getElementById('videoContainer');
+            var cw = document.getElementById('controlsWrapper');
+            var ib = document.getElementById('videoInfoBar');
+            if (uz) uz.style.display = 'block';
+            if (vc) vc.classList.remove('active');
+            if (cw) cw.classList.remove('active');
+            if (ib) ib.classList.remove('active');
+
+            setDisabled('analyzeBtn', true);
+            setDisplay('playerBadge', 'none');
+            setDisplay('cutsBadge', 'none');
+            setText('statVideos', '0');
+            setText('statDuration', '0m');
+            setText('statCuts', '0');
+            setText('statRes', '-');
+
+            var status = document.getElementById('analysisStatus');
+            if (status) status.className = 'yt-status';
+
+            renderCuts();
+            showToast('Pronto para carregar um novo vídeo', 'info');
+        }
+
+        async function restoreActiveSession() {
+            var savedId = localStorage.getItem('clipador_active_video_id');
+            var activeAnalysisId = localStorage.getItem('clipador_active_analysis_id');
+
+            try {
+                var url = savedId ? ('/api/video/' + savedId) : '/api/videos/latest';
+                var r = await fetch(url);
+                if (!r.ok && savedId) {
+                    r = await fetch('/api/videos/latest');
+                }
+                if (!r.ok) return;
+
+                var data = await r.json();
+                if (!data || !data.video_id) return;
+
+                currentVideoId = data.video_id;
+                localStorage.setItem('clipador_active_video_id', currentVideoId);
+                videoInfo = data.info || {};
+
+                onVideoLoaded(data, true);
+
+                if (data.cuts && Array.isArray(data.cuts) && data.cuts.length > 0) {
+                    cuts = data.cuts;
+                    renderCuts();
+                    setDisplay('cutsBadge', 'inline');
+                    setText('cutsBadge', cuts.length);
+                    setText('statCuts', cuts.length);
+                    setDisabled('exportAllBtn', false);
+                    setDisabled('exportSelectedBtn', false);
+                    setDisabled('exportAllBtn2', false);
+                    setDisabled('exportSelectedBtn2', false);
+
+                    var status = document.getElementById('analysisStatus');
+                    var text = document.getElementById('analysisText');
+                    if (status) status.className = 'yt-status active success';
+                    if (text) text.innerHTML = '⚡ Sessão restaurada! <b>' + cuts.length + ' cortes</b> prontos para visualização e exportação.';
+                } else if (data.has_transcription) {
+                    var status = document.getElementById('analysisStatus');
+                    var text = document.getElementById('analysisText');
+                    if (status) status.className = 'yt-status active success';
+                    if (text) text.innerHTML = '⚡ <b>Áudio já transcrito em cache!</b> Clique em Analisar para gerar os cortes em 2 segundos.';
+                }
+
+                // If an analysis was ongoing, resume polling progress seamlessly
+                if (activeAnalysisId) {
+                    try {
+                        var pr = await fetch('/analyze/progress/' + activeAnalysisId);
+                        if (pr.ok) {
+                            var pdata = await pr.json();
+                            if (!pdata.done && pdata.status !== 'error') {
+                                pollAnalysisProgress(activeAnalysisId);
+                            } else {
+                                localStorage.removeItem('clipador_active_analysis_id');
+                            }
+                        }
+                    } catch(pe) {
+                        localStorage.removeItem('clipador_active_analysis_id');
+                    }
+                }
+
+                checkExportStatus(currentVideoId, false);
+            } catch(e) {
+                console.warn('Não foi possível restaurar sessão anterior:', e);
+            }
+        }
+
         window.addEventListener('DOMContentLoaded', function() {
             checkFFmpeg();
             syncConfig();
+            loadGeminiConfig();
+            restoreActiveSession();
         });
     </script>
 </body>
