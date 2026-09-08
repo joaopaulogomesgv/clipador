@@ -1787,7 +1787,12 @@
         function setDisplay(id, val) { var e = document.getElementById(id); if (e) e.style.display = val; }
 
         async function analyzeVideo() {
-            if (!currentVideoId) return;
+            var vid = await getEffectiveVideoId();
+            if (!vid) {
+                showToast('Nenhum vídeo carregado para análise', 'error');
+                return;
+            }
+            currentVideoId = vid;
             var btn = document.getElementById('analyzeBtn');
             var status = document.getElementById('analysisStatus');
             var text = document.getElementById('analysisText');
@@ -1832,10 +1837,15 @@
                     localStorage.setItem('clipador_active_analysis_id', data.analysis_id);
                     pollAnalysisProgress(data.analysis_id);
                 } else {
-                    var e = await r.json();
+                    var errText = 'Erro ao iniciar análise (' + r.status + ')';
+                    try {
+                        var e = await r.json();
+                        errText = e.error || errText;
+                    } catch(jsonErr) {}
                     if (status) status.className = 'yt-status active error';
-                    if (text) text.textContent = e.error || 'Erro';
+                    if (text) text.textContent = errText;
                     if (btn) btn.disabled = false;
+                    showToast(errText, 'error');
                 }
             } catch(e) {
                 if (status) status.className = 'yt-status active error';
@@ -1975,7 +1985,9 @@
 
 
         async function reanalyzeHooks() {
-            if (!currentVideoId) { showToast('Nenhum vídeo carregado', 'error'); return; }
+            var vid = await getEffectiveVideoId();
+            if (!vid) { showToast('Nenhum vídeo carregado', 'error'); return; }
+            currentVideoId = vid;
             var minClip = document.getElementById('minClipDuration') ? parseInt(document.getElementById('minClipDuration').value) : 30;
             var maxClip = document.getElementById('maxClipDuration') ? parseInt(document.getElementById('maxClipDuration').value) : 90;
             var minScore = document.getElementById('minHookScore') ? parseInt(document.getElementById('minHookScore').value) : 45;
@@ -1994,7 +2006,11 @@
                         min_score: minScore
                     })
                 });
-                var d = await r.json();
+                var d = {};
+                try {
+                    d = await r.json();
+                } catch(jsonErr) {}
+
                 if (r.ok && d.cuts) {
                     cuts = d.cuts;
                     renderCuts();
@@ -2007,7 +2023,7 @@
                     setDisabled('exportSelectedBtn2', false);
                     showToast(d.cuts.length + ' cortes inteligentes identificados!', 'success');
                 } else {
-                    showToast(d.error || 'Erro ao recalcular ganchos', 'error');
+                    showToast(d.error || 'Erro ao recalcular ganchos (' + r.status + ')', 'error');
                 }
             } catch(e) {
                 showToast(e.message, 'error');

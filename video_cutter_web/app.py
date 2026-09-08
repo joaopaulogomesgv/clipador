@@ -226,6 +226,8 @@ def upload_video():
 
 def _ensure_video(video_id):
     if video_id in videos and videos[video_id].get("path") and os.path.exists(videos[video_id]["path"]):
+        if not videos[video_id].get("info"):
+            videos[video_id]["info"] = get_video_info(videos[video_id]["path"])
         return videos[video_id]
 
     upload_folder = app.config['UPLOAD_FOLDER']
@@ -439,7 +441,11 @@ def analyze_video(video_id):
     }
 
     video_path = video["path"]
-    total_duration = video["info"].get("duration", 0)
+    info = video.get("info")
+    if not info:
+        info = get_video_info(video_path)
+        video["info"] = info
+    total_duration = info.get("duration", 0) if info else 0
 
     thread = threading.Thread(
         target=_do_analyze,
@@ -1399,12 +1405,18 @@ def export_start(video_id):
             except Exception as e:
                 logger.error(f"Failed to load cuts JSON: {e}")
 
-    videos[video_id] = {
-        "id": video_id,
-        "path": video_path,
-        "filename": os.path.basename(video_path),
-        "cuts": cuts
-    }
+    if video_id in videos:
+        videos[video_id]["cuts"] = cuts
+        if not videos[video_id].get("info"):
+            videos[video_id]["info"] = get_video_info(video_path)
+    else:
+        videos[video_id] = {
+            "id": video_id,
+            "path": video_path,
+            "filename": os.path.basename(video_path),
+            "info": get_video_info(video_path),
+            "cuts": cuts
+        }
 
     if selected_ids:
         cuts = [c for c in cuts if c["id"] in selected_ids]
